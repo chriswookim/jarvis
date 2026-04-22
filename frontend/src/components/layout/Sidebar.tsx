@@ -8,6 +8,7 @@ const NAV = [
   { to: '/tasks',   icon: '✓', label: '할 일' },
   { to: '/wiki',    icon: '◈', label: '위키' },
   { to: '/memory',  icon: '◎', label: '메모리' },
+  { to: '/logs',    icon: '≡', label: '로그' },
 ]
 
 export default function Sidebar() {

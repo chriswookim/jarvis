@@ -40,8 +40,8 @@ export default function Home() {
   const [loading, setLoading] = useState(true)
 
   const refresh = useCallback(() => {
-    Promise.all([api.stats(), api.getTasks('pending'), api.activity(20)])
-      .then(([s, t, l]) => { setStats(s); setTasks(t.slice(0, 5)); setLogs(l) })
+    Promise.all([api.stats(), api.getTasks('pending'), api.activity({ limit: 20 })])
+      .then(([s, t, l]) => { setStats(s); setTasks(t.slice(0, 5)); setLogs(l.logs) })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])

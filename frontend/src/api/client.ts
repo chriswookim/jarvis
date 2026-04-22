@@ -33,8 +33,16 @@ export interface WikiEntry {
 export const api = {
   stats: () => req<{ doc_count: number; knowledge_count: number; task_count: number }>('/stats'),
 
-  activity: (limit = 30) =>
-    req<{ id: number; level: string; action: string; message: string; created_at: string }[]>(`/activity?limit=${limit}`),
+  activity: (params?: { limit?: number; level?: string; action?: string; q?: string }) => {
+    const p = new URLSearchParams()
+    if (params?.limit)  p.set('limit',  String(params.limit))
+    if (params?.level)  p.set('level',  params.level)
+    if (params?.action) p.set('action', params.action)
+    if (params?.q)      p.set('q',      params.q)
+    return req<{ total: number; logs: { id: number; level: string; action: string; message: string; created_at: string }[] }>(
+      `/activity${p.toString() ? '?' + p.toString() : ''}`
+    )
+  },
 
   ingestFile: (file: File) => {
     const form = new FormData()

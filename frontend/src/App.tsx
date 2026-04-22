@@ -6,6 +6,7 @@ import Ingest from '@/pages/Ingest'
 import Tasks from '@/pages/Tasks'
 import Wiki from '@/pages/Wiki'
 import Memory from '@/pages/Memory'
+import Logs from '@/pages/Logs'
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/wiki" element={<Wiki />} />
           <Route path="/memory" element={<Memory />} />
+          <Route path="/logs" element={<Logs />} />
         </Routes>
       </AnimatePresence>
     </AppShell>

@@ -95,14 +95,25 @@ async def health():
     return {"status": "ok"}
 
 @api.get("/activity")
-async def get_activity(limit: int = 30):
+async def get_activity(limit: int = 100, level: str = "", action: str = "", q: str = ""):
     db = next(get_db())
-    logs = db.query(ActivityLog).order_by(ActivityLog.id.desc()).limit(limit).all()
-    return [
-        {"id": l.id, "level": l.level, "action": l.action,
-         "message": l.message, "created_at": str(l.created_at)}
-        for l in logs
-    ]
+    query = db.query(ActivityLog)
+    if level:
+        query = query.filter(ActivityLog.level == level)
+    if action:
+        query = query.filter(ActivityLog.action == action)
+    if q:
+        query = query.filter(ActivityLog.message.contains(q))
+    total = query.count()
+    logs = query.order_by(ActivityLog.id.desc()).limit(limit).all()
+    return {
+        "total": total,
+        "logs": [
+            {"id": l.id, "level": l.level, "action": l.action,
+             "message": l.message, "created_at": str(l.created_at)}
+            for l in logs
+        ]
+    }
 
 
 # ── 수집 ─────────────────────────────────────────────────────────────────────
