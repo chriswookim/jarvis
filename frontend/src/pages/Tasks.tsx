@@ -1,7 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { api, Task, CoS, TaskStatus } from '@/api/client'
-import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
 
 const COS_CONFIG: Record<CoS, { label: string; icon: string; border: string; bg: string; text: string }> = {

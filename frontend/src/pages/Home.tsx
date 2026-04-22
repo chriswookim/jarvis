@@ -1,9 +1,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { api } from '@/api/client'
+import { api, Task } from '@/api/client'
 import StatCard from '@/components/ui/StatCard'
 import Card from '@/components/ui/Card'
-import Badge from '@/components/ui/Badge'
 
 const stagger = {
   hidden: {},
@@ -36,7 +35,7 @@ function timeAgo(dateStr: string) {
 
 export default function Home() {
   const [stats, setStats] = useState({ doc_count: 0, knowledge_count: 0, task_count: 0 })
-  const [tasks, setTasks] = useState<{ id: number; title: string; priority: string; assignee: string }[]>([])
+  const [tasks, setTasks] = useState<Task[]>([])
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -85,8 +84,7 @@ export default function Home() {
                 <li key={t.id} className="flex items-center justify-between py-2.5">
                   <span className="text-sm text-text-primary truncate mr-3">{t.title}</span>
                   <div className="flex gap-1.5 shrink-0">
-                    <Badge value={t.priority} type="priority" />
-                    <Badge value={t.assignee} type="assignee" />
+                    <span className="text-xs text-text-muted bg-neutral-bg4 px-1.5 py-0.5 rounded">{t.team}</span>
                   </div>
                 </li>
               ))}
