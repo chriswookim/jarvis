@@ -4,7 +4,21 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 from sqlalchemy import text
-import shutil, os
+from datetime import datetime, timezone, timedelta
+import shutil, os, time
+
+KST = timezone(timedelta(hours=9))
+
+def now_kst() -> datetime:
+    return datetime.now(KST)
+
+def fmt_dt(dt) -> str | None:
+    """datetime → ISO8601 문자열 with +09:00 (KST)"""
+    if dt is None:
+        return None
+    if isinstance(dt, datetime):
+        return dt.strftime("%Y-%m-%dT%H:%M:%S") + "+09:00"
+    return str(dt)
 
 from app.database import engine, get_db
 from app.models import Base, Document, KnowledgeEntry, Task, ActivityLog
@@ -52,31 +66,61 @@ def auto_process(doc_id: int):
     doc = db.query(Document).filter(Document.id == doc_id).first()
     if not doc:
         return
-    log(db, "auto_process", f"자동 처리 시작: {doc.title}")
+
+    content_len = len(doc.content or "")
+    log(db, "auto_process", f"처리 시작: '{doc.title}' (본문 {content_len}자, 소스={doc.source})")
+
+    # ── 위키 생성 ────────────────────────────────────────────
+    t0 = time.time()
     try:
         wiki = build_wiki_entry(doc.title, doc.content)
         entry = KnowledgeEntry(topic=wiki["topic"], content=wiki["content"])
         db.add(entry)
         doc.summary = wiki["content"][:500]
         db.commit()
-        log(db, "auto_process", f"위키 생성 완료: {doc.title}", "success")
+        elapsed = round(time.time() - t0, 1)
+        log(db, "auto_process",
+            f"위키 생성 완료: '{doc.title}' ({len(wiki['content'])}자, {elapsed}초)",
+            "success")
     except Exception as e:
-        log(db, "auto_process", f"위키 생성 실패: {e}", "error")
+        log(db, "auto_process", f"위키 생성 실패: {type(e).__name__}: {e}", "error")
         return
+
+    # ── 할 일 추출 ────────────────────────────────────────────
+    t1 = time.time()
     try:
-        tasks_data = extract_tasks(doc.content)
-        for t in tasks_data:
-            db.add(Task(
-                title=t.get("title", ""),
-                class_of_service=t.get("class_of_service", "standard"),
-                team=t.get("team", "미분류"),
-                assignee=t.get("assignee", "나"),
-                due_date=t.get("due_date"),
-            ))
-        db.commit()
-        log(db, "auto_process", f"할 일 {len(tasks_data)}개 자동 추출 완료", "success")
+        tasks_data, debug_msg = extract_tasks(doc.content)
+        elapsed = round(time.time() - t1, 1)
+
+        if not tasks_data:
+            # 할 일이 없거나 추출 실패 — warn 수준으로 기록
+            log(db, "auto_process",
+                f"할 일 추출 결과 0개 ({elapsed}초) — {debug_msg}",
+                "error" if debug_msg.startswith("[") else "info")
+        else:
+            for t in tasks_data:
+                db.add(Task(
+                    title=t.get("title", ""),
+                    class_of_service=t.get("class_of_service", "standard"),
+                    team=t.get("team", "미분류"),
+                    assignee=t.get("assignee", "나"),
+                    due_date=t.get("due_date"),
+                ))
+            db.commit()
+            teams_summary = ", ".join({t.get("team", "?") for t in tasks_data})
+            log(db, "auto_process",
+                f"할 일 {len(tasks_data)}개 추출 완료 ({elapsed}초) | 팀: {teams_summary}",
+                "success")
+
+            # 각 할일 항목을 개별 로그로 기록 (CoS + 팀 확인용)
+            for t in tasks_data:
+                cos = t.get("class_of_service", "?")
+                team = t.get("team", "?")
+                title = t.get("title", "")[:60]
+                log(db, "task_extract", f"[{cos}][{team}] {title}")
+
     except Exception as e:
-        log(db, "auto_process", f"할 일 추출 실패: {e}", "error")
+        log(db, "auto_process", f"할 일 추출 중 예외: {type(e).__name__}: {e}", "error")
 
 
 # ── 통계 ─────────────────────────────────────────────────────────────────────
@@ -110,7 +154,7 @@ async def get_activity(limit: int = 100, level: str = "", action: str = "", q: s
         "total": total,
         "logs": [
             {"id": l.id, "level": l.level, "action": l.action,
-             "message": l.message, "created_at": str(l.created_at)}
+             "message": l.message, "created_at": fmt_dt(l.created_at)}
             for l in logs
         ]
     }
@@ -219,7 +263,7 @@ async def list_wiki():
     return [
         {"id": e.id, "topic": e.topic,
          "preview": e.content[:200] if e.content else "",
-         "updated_at": str(e.updated_at)}
+         "updated_at": fmt_dt(e.updated_at)}
         for e in entries
     ]
 
@@ -230,7 +274,7 @@ async def get_wiki(entry_id: int):
     if not entry:
         raise HTTPException(status_code=404, detail="위키 항목을 찾을 수 없습니다.")
     return {"id": entry.id, "topic": entry.topic, "content": entry.content,
-            "updated_at": str(entry.updated_at)}
+            "updated_at": fmt_dt(entry.updated_at)}
 
 class WikiUpdate(BaseModel):
     topic: str
@@ -246,7 +290,7 @@ async def update_wiki(entry_id: int, req: WikiUpdate):
     entry.content = req.content
     db.commit()
     log(db, "wiki_edit", f"위키 수동 편집: {entry.topic}", "info")
-    return {"id": entry.id, "topic": entry.topic, "updated_at": str(entry.updated_at)}
+    return {"id": entry.id, "topic": entry.topic, "updated_at": fmt_dt(entry.updated_at)}
 
 @api.post("/wiki/{entry_id}/reprocess")
 async def reprocess_wiki(entry_id: int):
@@ -261,7 +305,7 @@ async def reprocess_wiki(entry_id: int):
         db.commit()
         log(db, "wiki_reprocess", f"LLM 재분석 완료: {entry.topic}", "success")
         return {"id": entry.id, "topic": entry.topic, "content": entry.content,
-                "updated_at": str(entry.updated_at)}
+                "updated_at": fmt_dt(entry.updated_at)}
     except Exception as e:
         log(db, "wiki_reprocess", f"LLM 재분석 실패: {e}", "error")
         raise HTTPException(status_code=500, detail=str(e))

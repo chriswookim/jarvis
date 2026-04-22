@@ -1,4 +1,4 @@
-import json
+import json, re
 from app.modules.llm import chat
 from app.config import settings
 
@@ -14,6 +14,8 @@ COS_GUIDE = """서비스 등급(class_of_service) 분류 기준:
 - standard: 일반적인 업무 흐름으로 처리 (대부분의 업무)
 - intangible: 기한 없는 개선/연구/검토 사항"""
 
+VALID_COS = {"expedite", "fixed_date", "standard", "intangible"}
+
 def build_wiki_entry(title: str, content: str) -> dict:
     result = chat(
         prompt=(
@@ -25,40 +27,90 @@ def build_wiki_entry(title: str, content: str) -> dict:
     )
     return {"topic": title, "content": result}
 
-def extract_tasks(content: str) -> list:
+
+def extract_tasks(content: str) -> tuple[list, str]:
+    """
+    텍스트에서 할 일을 추출한다.
+    반환: (tasks_list, debug_message)
+      - tasks_list: 추출된 Task dict 목록 (실패 시 [])
+      - debug_message: 로그에 기록할 상세 설명 문자열
+    """
     team_list = ", ".join(TEAMS)
-    result = chat(
-        prompt=f"""다음 텍스트에서 할 일 항목을 추출하세요.
+    raw = ""
+
+    try:
+        raw = chat(
+            prompt=f"""다음 텍스트에서 할 일 항목을 추출하세요.
 
 {COS_GUIDE}
 
-담당 팀 목록: {team_list}, 나(={MY_TEAM} 담당자 본인)
+담당 팀 목록: {team_list}
+※ 본인(나) 업무는 team을 "{MY_TEAM}"으로 지정하세요.
 
 각 항목은 아래 필드를 포함하는 JSON 배열로 반환하세요:
-- title: 할 일 제목
+- title: 할 일 제목 (한 줄 요약)
 - class_of_service: expedite / fixed_date / standard / intangible 중 하나
-- team: 위 팀 목록 중 하나 또는 "나" (본인 업무)
-- assignee: 담당자 이름 또는 팀명 (텍스트에서 추출, 없으면 "나")
-- due_date: 기한 (YYYY-MM-DD 형식, 없으면 null)
+- team: 위 팀 목록 중 정확히 하나 (담당 팀이 불명확하면 "{MY_TEAM}")
+- assignee: 담당자 이름 (텍스트에서 추출, 없으면 "나")
+- due_date: 기한 (YYYY-MM-DD, 없으면 null)
 
+할 일이 없으면 빈 배열 []을 반환하세요.
 텍스트:
 {content[:3000]}
 
-JSON 배열만 반환하세요. 다른 텍스트 없이.""",
-        system="당신은 업무 분석 전문가입니다. 텍스트에서 할 일을 추출하여 JSON으로만 반환하세요.",
-        model=settings.zen_model,
-    )
+JSON 배열만 반환하세요. 설명이나 다른 텍스트를 포함하지 마세요.""",
+            system="당신은 업무 분석 전문가입니다. 텍스트에서 실행 가능한 할 일을 추출하여 JSON으로만 반환하세요.",
+            model=settings.zen_model,
+        )
+    except Exception as e:
+        return [], f"[LLM 호출 실패] {type(e).__name__}: {e}"
+
+    raw_preview = raw.strip()[:400].replace("\n", " ")
+
+    # JSON 배열 추출 시도
+    text = raw.strip()
+    parse_method = ""
+
+    # 1) ```json ... ``` 블록
+    m = re.search(r'```(?:json)?\s*(\[[\s\S]*?\])\s*```', text)
+    if m:
+        text = m.group(1)
+        parse_method = "코드블록 추출"
+    # 2) 텍스트가 [ 로 시작
+    elif text.startswith('['):
+        parse_method = "직접 배열"
+    # 3) 텍스트 내부에 [...] 포함
+    else:
+        m2 = re.search(r'\[[\s\S]*\]', text)
+        if m2:
+            text = m2.group(0)
+            parse_method = "내부 배열 추출"
+        else:
+            return [], (
+                f"[JSON 배열 없음] LLM 응답에서 배열을 찾지 못함. "
+                f"원문({len(raw)}자): {raw_preview}"
+            )
+
     try:
-        import re
-        text = result.strip()
-        # Extract JSON array from response (handles ```json ... ```, bare [...], or embedded)
-        m = re.search(r'```(?:json)?\s*(\[[\s\S]*?\])\s*```', text)
-        if m:
-            text = m.group(1)
-        elif not text.startswith('['):
-            m2 = re.search(r'\[[\s\S]*\]', text)
-            if m2:
-                text = m2.group(0)
-        return json.loads(text)
-    except (json.JSONDecodeError, Exception):
-        return []
+        tasks = json.loads(text)
+    except json.JSONDecodeError as e:
+        return [], (
+            f"[JSON 파싱 오류] {e} | 방법={parse_method} | "
+            f"파싱 시도 텍스트: {text[:200]}"
+        )
+
+    if not isinstance(tasks, list):
+        return [], f"[타입 오류] 배열이 아닌 {type(tasks).__name__} 반환됨: {str(tasks)[:200]}"
+
+    # CoS 값 보정
+    for t in tasks:
+        if t.get("class_of_service") not in VALID_COS:
+            t["class_of_service"] = "standard"
+        if not t.get("team") or t.get("team") == "나":
+            t["team"] = MY_TEAM
+
+    debug = (
+        f"[성공] {len(tasks)}개 추출 (방법={parse_method}, LLM응답 {len(raw)}자) | "
+        f"원문 앞부분: {raw_preview[:150]}"
+    )
+    return tasks, debug

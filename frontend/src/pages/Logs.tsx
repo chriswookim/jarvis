@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import { api } from '@/api/client'
 
 type Log = { id: number; level: string; action: string; message: string; created_at: string }
@@ -19,20 +19,22 @@ const LEVEL_LABEL: Record<string, string> = {
 }
 
 const ACTION_LABELS: Record<string, string> = {
-  ingest_file:   '파일 수집',
-  ingest_url:    'URL 수집',
-  ingest_email:  '메일 수집',
-  auto_process:  '자동 처리',
-  process:       '지식 처리',
-  wiki_edit:     '위키 편집',
-  wiki_reprocess:'위키 재분석',
-  task_update:   '할 일 변경',
-  memory:        '메모리',
-  report:        '보고서',
+  ingest_file:    '파일 수집',
+  ingest_url:     'URL 수집',
+  ingest_email:   '메일 수집',
+  auto_process:   '자동 처리',
+  task_extract:   '할일 추출',
+  process:        '지식 처리',
+  wiki_edit:      '위키 편집',
+  wiki_reprocess: '위키 재분석',
+  task_update:    '할 일 변경',
+  memory:         '메모리',
+  report:         '보고서',
 }
 
 function timeAgo(dateStr: string) {
   const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000)
+  if (diff < 0) return '방금'
   if (diff < 60) return `${diff}초 전`
   if (diff < 3600) return `${Math.floor(diff / 60)}분 전`
   if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`
@@ -43,6 +45,7 @@ function formatDate(dateStr: string) {
   return new Date(dateStr).toLocaleString('ko-KR', {
     month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
+    timeZone: 'Asia/Seoul',
   })
 }
 
@@ -55,30 +58,38 @@ export default function Logs() {
   const [search, setSearch]   = useState('')
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [limit, setLimit]     = useState(100)
+  const [expanded, setExpanded] = useState<number | null>(null)
   const searchRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const fetch = useCallback((q?: string) => {
+  const fetchLogs = useCallback((q?: string) => {
     api.activity({ limit, level: levelFilter, action: actionFilter, q: q ?? search })
       .then(r => { setLogs(r.logs); setTotal(r.total) })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [limit, levelFilter, actionFilter, search])
 
-  useEffect(() => { fetch() }, [fetch])
+  useEffect(() => { fetchLogs() }, [fetchLogs])
 
   useEffect(() => {
     if (!autoRefresh) return
-    const t = setInterval(() => fetch(), 4000)
+    const t = setInterval(() => fetchLogs(), 4000)
     return () => clearInterval(t)
-  }, [autoRefresh, fetch])
+  }, [autoRefresh, fetchLogs])
 
   const handleSearch = (v: string) => {
     setSearch(v)
     if (searchRef.current) clearTimeout(searchRef.current)
-    searchRef.current = setTimeout(() => fetch(v), 400)
+    searchRef.current = setTimeout(() => fetchLogs(v), 400)
   }
 
   const actions = Array.from(new Set(logs.map(l => l.action)))
+
+  const toggleExpand = (id: number) =>
+    setExpanded(prev => (prev === id ? null : id))
+
+  // 오류/추출 관련 메시지 하이라이트
+  const isImportant = (log: Log) =>
+    log.level === 'error' || log.action === 'task_extract' || log.action === 'auto_process'
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
@@ -89,46 +100,51 @@ export default function Logs() {
           <h1 className="text-2xl font-semibold text-text-primary">활동 로그</h1>
           <p className="text-sm text-text-muted mt-1">전체 {total}건</p>
         </div>
-        <button
-          onClick={() => setAutoRefresh(v => !v)}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-            autoRefresh
-              ? 'bg-status-success/10 border-status-success/20 text-status-success'
-              : 'bg-neutral-bg3 border-border-subtle text-text-muted'
-          }`}
-        >
-          <span className={`w-1.5 h-1.5 rounded-full ${autoRefresh ? 'bg-status-success animate-pulse' : 'bg-neutral-bg6'}`} />
-          {autoRefresh ? '실시간 갱신 중' : '갱신 중지됨'}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => fetchLogs()}
+            className="text-xs text-text-muted hover:text-text-primary bg-neutral-bg3 hover:bg-neutral-bg4 px-3 py-1.5 rounded-lg border border-border-subtle transition-colors"
+          >
+            ↻ 새로고침
+          </button>
+          <button
+            onClick={() => setAutoRefresh(v => !v)}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+              autoRefresh
+                ? 'bg-status-success/10 border-status-success/20 text-status-success'
+                : 'bg-neutral-bg3 border-border-subtle text-text-muted'
+            }`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${autoRefresh ? 'bg-status-success animate-pulse' : 'bg-neutral-bg6'}`} />
+            {autoRefresh ? '실시간 갱신 중' : '갱신 중지됨'}
+          </button>
+        </div>
       </div>
 
       {/* 필터 바 */}
       <div className="flex flex-wrap gap-2">
-        {/* 검색 */}
         <input
           value={search}
           onChange={e => handleSearch(e.target.value)}
           placeholder="메시지 검색..."
-          className="glass-input px-3 py-1.5 text-sm w-56"
+          className="glass-input px-3 py-1.5 text-sm w-56 outline-none"
         />
 
-        {/* 레벨 필터 */}
         <div className="flex gap-1 bg-neutral-bg3 p-1 rounded-lg">
-          {['', 'success', 'error', 'info'].map(l => (
+          {(['', 'success', 'error', 'info'] as const).map(l => (
             <button key={l} onClick={() => setLevelFilter(l)}
               className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
                 levelFilter === l ? 'bg-brand text-white' : 'text-text-secondary hover:text-text-primary'
               }`}>
-              {l === '' ? '전체' : LEVEL_LABEL[l]}
+              {l === '' ? '전체' : LEVEL_LABEL[l] ?? l}
             </button>
           ))}
         </div>
 
-        {/* 액션 필터 */}
         <select
           value={actionFilter}
           onChange={e => setActionFilter(e.target.value)}
-          className="glass-input px-3 py-1.5 text-xs text-text-secondary bg-neutral-bg3 rounded-lg border border-border-subtle cursor-pointer"
+          className="glass-input px-3 py-1.5 text-xs text-text-secondary bg-neutral-bg3 rounded-lg border border-border-subtle cursor-pointer outline-none"
         >
           <option value="">전체 작업</option>
           {actions.map(a => (
@@ -136,11 +152,10 @@ export default function Logs() {
           ))}
         </select>
 
-        {/* 표시 건수 */}
         <select
           value={limit}
           onChange={e => setLimit(Number(e.target.value))}
-          className="glass-input px-3 py-1.5 text-xs text-text-secondary bg-neutral-bg3 rounded-lg border border-border-subtle cursor-pointer"
+          className="glass-input px-3 py-1.5 text-xs text-text-secondary bg-neutral-bg3 rounded-lg border border-border-subtle cursor-pointer outline-none"
         >
           {[50, 100, 200, 500].map(n => (
             <option key={n} value={n}>최근 {n}건</option>
@@ -157,31 +172,74 @@ export default function Logs() {
         ) : logs.length === 0 ? (
           <p className="text-sm text-text-muted text-center py-12">로그가 없습니다</p>
         ) : (
-          <div className="divide-y divide-border-subtle max-h-[calc(100vh-280px)] overflow-y-auto">
+          <div className="divide-y divide-border-subtle max-h-[calc(100vh-300px)] overflow-y-auto">
             {logs.map(log => (
-              <div key={log.id} className="flex items-start gap-3 px-4 py-3 hover:bg-neutral-bg3 transition-colors">
-                {/* 레벨 점 */}
-                <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${LEVEL_DOT[log.level] ?? 'bg-neutral-bg6'}`} />
+              <div key={log.id}>
+                {/* 요약 행 */}
+                <div
+                  onClick={() => toggleExpand(log.id)}
+                  className={`flex items-start gap-3 px-4 py-3 transition-colors cursor-pointer ${
+                    expanded === log.id ? 'bg-neutral-bg3' : 'hover:bg-neutral-bg3'
+                  }`}
+                >
+                  {/* 레벨 점 */}
+                  <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${LEVEL_DOT[log.level] ?? 'bg-neutral-bg6'}`} />
 
-                {/* 레벨 배지 */}
-                <span className={`shrink-0 text-xs font-medium px-1.5 py-0.5 rounded border ${LEVEL_STYLE[log.level] ?? LEVEL_STYLE.info}`}>
-                  {LEVEL_LABEL[log.level] ?? log.level}
-                </span>
+                  {/* 레벨 배지 */}
+                  <span className={`shrink-0 text-xs font-medium px-1.5 py-0.5 rounded border ${LEVEL_STYLE[log.level] ?? LEVEL_STYLE.info}`}>
+                    {LEVEL_LABEL[log.level] ?? log.level}
+                  </span>
 
-                {/* 작업 배지 */}
-                <span className="shrink-0 text-xs text-text-muted bg-neutral-bg4 px-2 py-0.5 rounded hidden sm:inline">
-                  {ACTION_LABELS[log.action] ?? log.action}
-                </span>
+                  {/* 액션 배지 */}
+                  <span className={`shrink-0 text-xs px-2 py-0.5 rounded hidden sm:inline ${
+                    isImportant(log)
+                      ? 'bg-brand-subtle text-brand-light'
+                      : 'text-text-muted bg-neutral-bg4'
+                  }`}>
+                    {ACTION_LABELS[log.action] ?? log.action}
+                  </span>
 
-                {/* 메시지 */}
-                <p className="flex-1 text-sm text-text-secondary min-w-0 truncate" title={log.message}>
-                  {log.message}
-                </p>
+                  {/* 메시지 (요약) */}
+                  <p className={`flex-1 text-sm min-w-0 ${expanded === log.id ? 'whitespace-pre-wrap break-all' : 'truncate'} ${
+                    log.level === 'error' ? 'text-status-error' : 'text-text-secondary'
+                  }`}>
+                    {log.message}
+                  </p>
 
-                {/* 시간 */}
-                <span className="text-xs text-text-muted shrink-0 tabular-nums" title={formatDate(log.created_at)}>
-                  {timeAgo(log.created_at)}
-                </span>
+                  {/* 시간 */}
+                  <span className="text-xs text-text-muted shrink-0 tabular-nums" title={formatDate(log.created_at)}>
+                    {timeAgo(log.created_at)}
+                  </span>
+                </div>
+
+                {/* 확장된 상세 내용 */}
+                <AnimatePresence>
+                  {expanded === log.id && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="bg-neutral-bg2 border-t border-border-subtle overflow-hidden"
+                    >
+                      <div className="px-14 py-3 space-y-2">
+                        <p className="text-xs font-mono text-text-secondary whitespace-pre-wrap break-all leading-relaxed">
+                          {log.message}
+                        </p>
+                        <div className="flex gap-4 text-xs text-text-muted mt-2">
+                          <span>ID: {log.id}</span>
+                          <span>액션: {log.action}</span>
+                          <span>시각: {formatDate(log.created_at)}</span>
+                          <button
+                            onClick={e => { e.stopPropagation(); navigator.clipboard?.writeText(log.message) }}
+                            className="text-brand-light hover:underline ml-auto"
+                          >
+                            복사
+                          </button>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
             ))}
           </div>

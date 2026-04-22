@@ -9,5 +9,7 @@ services:
       - ./data:/app/data
     env_file:
       - .env
+    environment:
+      - TZ=Asia/Seoul
     mem_limit: 512m
     memswap_limit: 512m
