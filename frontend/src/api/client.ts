@@ -12,6 +12,10 @@ async function req<T>(path: string, options?: RequestInit): Promise<T> {
 export const api = {
   stats: () => req<{ doc_count: number; knowledge_count: number; task_count: number }>('/stats'),
 
+  activity: (limit = 30) =>
+    req<{ id: number; level: string; action: string; message: string; created_at: string }[]>(`/activity?limit=${limit}`),
+
+
   ingestFile: (file: File) => {
     const form = new FormData()
     form.append('file', file)

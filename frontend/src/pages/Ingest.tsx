@@ -8,6 +8,7 @@ interface IngestResult {
   id: number
   title: string
   processed?: boolean
+  processing?: boolean
   tasks_created?: number
 }
 
@@ -41,10 +42,17 @@ export default function Ingest() {
   }
 
   const handleProcess = async (id: number) => {
+    setResults(prev => prev.map(d => d.id === id ? { ...d, processing: true } : d))
+    setError('')
     try {
       const r = await api.processDoc(id)
-      setResults(prev => prev.map(d => d.id === id ? { ...d, processed: true, tasks_created: r.tasks_created } : d))
-    } catch { setError('처리에 실패했습니다.') }
+      setResults(prev => prev.map(d =>
+        d.id === id ? { ...d, processing: false, processed: true, tasks_created: r.tasks_created } : d
+      ))
+    } catch {
+      setResults(prev => prev.map(d => d.id === id ? { ...d, processing: false } : d))
+      setError('처리에 실패했습니다. 활동 로그를 확인해주세요.')
+    }
   }
 
   const handleEmail = async () => {
@@ -89,11 +97,20 @@ export default function Ingest() {
             onClick={() => fileRef.current?.click()}
             className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
               dragging ? 'border-brand bg-brand-subtle' : 'border-border hover:border-border-strong'
-            }`}
+            } ${loading ? 'pointer-events-none opacity-50' : ''}`}
           >
-            <p className="text-2xl mb-2">📂</p>
-            <p className="text-sm text-text-secondary">파일을 드래그하거나 클릭하세요</p>
-            <p className="text-xs text-text-muted mt-1">PDF · MD · TXT 지원</p>
+            {loading ? (
+              <>
+                <div className="w-6 h-6 border-2 border-brand border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                <p className="text-sm text-text-secondary">업로드 중...</p>
+              </>
+            ) : (
+              <>
+                <p className="text-2xl mb-2">📂</p>
+                <p className="text-sm text-text-secondary">파일을 드래그하거나 클릭하세요</p>
+                <p className="text-xs text-text-muted mt-1">PDF · MD · TXT 지원</p>
+              </>
+            )}
           </div>
           <input ref={fileRef} type="file" accept=".pdf,.md,.txt" className="hidden"
             onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])} />
@@ -108,6 +125,7 @@ export default function Ingest() {
               value={url}
               onChange={e => setUrl(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleUrl()}
+              disabled={loading}
             />
             <Button onClick={handleUrl} loading={loading} className="w-full">
               수집하기
@@ -116,33 +134,56 @@ export default function Ingest() {
         </Card>
       </div>
 
-      {error && <p className="text-sm text-status-error">{error}</p>}
+      {error && (
+        <motion.p
+          initial={{ opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-sm text-status-error bg-status-error/10 border border-status-error/20 rounded-lg px-4 py-2.5"
+        >
+          {error}
+        </motion.p>
+      )}
 
       {/* 수집된 문서 목록 */}
       <AnimatePresence>
         {results.length > 0 && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
             <Card title="수집된 문서">
-              <ul className="space-y-2">
+              <ul className="space-y-0 divide-y divide-border-subtle">
                 {results.map(r => (
                   <motion.li
                     key={r.id}
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
-                    className="flex items-center justify-between py-2.5 border-b border-border-subtle last:border-0"
+                    className="py-3"
                   >
-                    <div>
-                      <p className="text-sm text-text-primary">{r.title}</p>
-                      {r.processed && (
-                        <p className="text-xs text-status-success mt-0.5">
-                          처리 완료 · 할 일 {r.tasks_created}개 생성됨
-                        </p>
-                      )}
-                    </div>
-                    {!r.processed && (
-                      <Button size="sm" variant="secondary" onClick={() => handleProcess(r.id)}>
-                        지식 처리
-                      </Button>
+                    {r.processing ? (
+                      <div className="flex items-center gap-3 bg-brand-subtle border border-brand/20 rounded-lg px-4 py-3">
+                        <div className="w-4 h-4 border-2 border-brand border-t-transparent rounded-full animate-spin shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-text-primary font-medium truncate">{r.title}</p>
+                          <p className="text-xs text-brand mt-0.5">LLM이 문서를 분석 중입니다... (10~30초 소요)</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between">
+                        <div className="min-w-0 mr-3">
+                          <p className="text-sm text-text-primary truncate">{r.title}</p>
+                          {r.processed && (
+                            <p className="text-xs text-status-success mt-0.5">
+                              처리 완료 · 할 일 {r.tasks_created}개 생성됨
+                            </p>
+                          )}
+                        </div>
+                        {!r.processed && (
+                          <Button size="sm" variant="secondary" onClick={() => handleProcess(r.id)}>
+                            지식 처리
+                          </Button>
+                        )}
+                        {r.processed && (
+                          <span className="text-xs text-status-success shrink-0">✓ 완료</span>
+                        )}
+                      </div>
                     )}
                   </motion.li>
                 ))}
