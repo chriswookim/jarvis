@@ -49,9 +49,16 @@ JSON 배열만 반환하세요. 다른 텍스트 없이.""",
         model=settings.zen_model,
     )
     try:
+        import re
         text = result.strip()
-        if "```" in text:
-            text = text.split("```")[1].lstrip("json").strip()
+        # Extract JSON array from response (handles ```json ... ```, bare [...], or embedded)
+        m = re.search(r'```(?:json)?\s*(\[[\s\S]*?\])\s*```', text)
+        if m:
+            text = m.group(1)
+        elif not text.startswith('['):
+            m2 = re.search(r'\[[\s\S]*\]', text)
+            if m2:
+                text = m2.group(0)
         return json.loads(text)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, Exception):
         return []

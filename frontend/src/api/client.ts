@@ -84,11 +84,17 @@ export const api = {
   // 할 일
   getTasks: (status = 'all') => req<Task[]>(`/tasks?status=${status}`),
 
+  createTask: (data: { title: string; class_of_service: string; team: string; assignee?: string; due_date?: string }) =>
+    req<Task>('/tasks', { method: 'POST', body: JSON.stringify(data) }),
+
   updateTask: (id: number, patch: { status?: string; class_of_service?: string; team?: string }) =>
     req<{ id: number; status: string; class_of_service: string; team: string }>(`/tasks/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),
+
+  deleteTask: (id: number) =>
+    req<{ deleted: number }>(`/tasks/${id}`, { method: 'DELETE' }),
 
   sendReport: () => req<{ sent: boolean; task_count: number }>('/tasks/report', { method: 'POST' }),
 

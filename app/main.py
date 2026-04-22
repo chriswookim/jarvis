@@ -310,6 +310,38 @@ async def get_tasks(status: str = "all"):
         for t in tasks
     ]
 
+class TaskCreate(BaseModel):
+    title: str
+    class_of_service: str = "standard"
+    team: str = "미분류"
+    assignee: str | None = None
+    due_date: str | None = None
+
+@api.post("/tasks")
+async def create_task(req: TaskCreate):
+    db = next(get_db())
+    task = Task(
+        title=req.title,
+        class_of_service=req.class_of_service,
+        team=req.team,
+        assignee=req.assignee,
+        due_date=req.due_date,
+    )
+    db.add(task); db.commit()
+    log(db, "task_update", f"할 일 생성: {req.title}", "success")
+    return {"id": task.id, "title": task.title,
+            "class_of_service": task.class_of_service, "team": task.team,
+            "assignee": task.assignee, "due_date": task.due_date, "status": task.status}
+
+@api.delete("/tasks/{task_id}")
+async def delete_task(task_id: int):
+    db = next(get_db())
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="할 일을 찾을 수 없습니다.")
+    db.delete(task); db.commit()
+    return {"deleted": task_id}
+
 class TaskStatusUpdate(BaseModel):
     status: str | None = None
     class_of_service: str | None = None
