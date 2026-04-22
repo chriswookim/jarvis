@@ -9,12 +9,32 @@ async function req<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json()
 }
 
+export type CoS = 'expedite' | 'fixed_date' | 'standard' | 'intangible'
+export type TaskStatus = 'pending' | 'in_progress' | 'done'
+
+export interface Task {
+  id: number
+  title: string
+  class_of_service: CoS
+  team: string
+  assignee: string
+  due_date: string | null
+  status: TaskStatus
+}
+
+export interface WikiEntry {
+  id: number
+  topic: string
+  content: string
+  preview?: string
+  updated_at: string
+}
+
 export const api = {
   stats: () => req<{ doc_count: number; knowledge_count: number; task_count: number }>('/stats'),
 
   activity: (limit = 30) =>
     req<{ id: number; level: string; action: string; message: string; created_at: string }[]>(`/activity?limit=${limit}`),
-
 
   ingestFile: (file: File) => {
     const form = new FormData()
@@ -42,13 +62,24 @@ export const api = {
       method: 'POST',
     }),
 
-  getTasks: (status = 'all') =>
-    req<{ id: number; title: string; priority: string; assignee: string; status: string }[]>(`/tasks?status=${status}`),
+  // 위키
+  listWiki: () => req<WikiEntry[]>('/wiki'),
+  getWiki: (id: number) => req<WikiEntry>(`/wiki/${id}`),
+  updateWiki: (id: number, topic: string, content: string) =>
+    req<WikiEntry>(`/wiki/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ topic, content }),
+    }),
+  reprocessWiki: (id: number) =>
+    req<WikiEntry>(`/wiki/${id}/reprocess`, { method: 'POST' }),
 
-  updateTask: (id: number, status: string) =>
-    req<{ id: number; status: string }>(`/tasks/${id}`, {
+  // 할 일
+  getTasks: (status = 'all') => req<Task[]>(`/tasks?status=${status}`),
+
+  updateTask: (id: number, patch: { status?: string; class_of_service?: string; team?: string }) =>
+    req<{ id: number; status: string; class_of_service: string; team: string }>(`/tasks/${id}`, {
       method: 'PATCH',
-      body: JSON.stringify({ status }),
+      body: JSON.stringify(patch),
     }),
 
   sendReport: () => req<{ sent: boolean; task_count: number }>('/tasks/report', { method: 'POST' }),

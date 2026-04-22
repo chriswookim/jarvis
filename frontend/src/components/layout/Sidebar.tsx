@@ -6,6 +6,7 @@ const NAV = [
   { to: '/',        icon: '⌂', label: '홈' },
   { to: '/ingest',  icon: '↑', label: '수집' },
   { to: '/tasks',   icon: '✓', label: '할 일' },
+  { to: '/wiki',    icon: '◈', label: '위키' },
   { to: '/memory',  icon: '◎', label: '메모리' },
 ]
 
@@ -44,7 +45,7 @@ export default function Sidebar() {
       </nav>
 
       <div className="px-5 py-4 border-t border-border-subtle">
-        <p className="text-xs text-text-muted">NAS · DS720+</p>
+        <p className="text-xs text-text-muted">기획홍보팀 · DS720+</p>
       </div>
     </aside>
   )

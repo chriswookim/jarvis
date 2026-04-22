@@ -4,6 +4,7 @@ import AppShell from '@/components/layout/AppShell'
 import Home from '@/pages/Home'
 import Ingest from '@/pages/Ingest'
 import Tasks from '@/pages/Tasks'
+import Wiki from '@/pages/Wiki'
 import Memory from '@/pages/Memory'
 
 export default function App() {
@@ -14,6 +15,7 @@ export default function App() {
           <Route path="/" element={<Home />} />
           <Route path="/ingest" element={<Ingest />} />
           <Route path="/tasks" element={<Tasks />} />
+          <Route path="/wiki" element={<Wiki />} />
           <Route path="/memory" element={<Memory />} />
         </Routes>
       </AnimatePresence>

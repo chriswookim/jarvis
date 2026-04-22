@@ -3,6 +3,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
+from sqlalchemy import text
 import shutil, os
 
 from app.database import engine, get_db
@@ -13,9 +14,27 @@ from app.modules.memory import remember, recall, get_summary
 from app.modules.notification import send_daily_report
 from app.config import settings
 
+
+def migrate_db():
+    """기존 DB에 새 컬럼 추가 (없는 경우에만)."""
+    new_cols = [
+        ("tasks", "class_of_service", "VARCHAR(20) DEFAULT 'standard'"),
+        ("tasks", "team",             "VARCHAR(50)  DEFAULT '미분류'"),
+        ("tasks", "due_date",         "VARCHAR(20)"),
+    ]
+    with engine.connect() as conn:
+        for table, col, definition in new_cols:
+            try:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {definition}"))
+                conn.commit()
+            except Exception:
+                pass  # 이미 존재하면 무시
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    migrate_db()
     yield
 
 app = FastAPI(title="Jarvis", lifespan=lifespan)
@@ -27,15 +46,15 @@ def log(db, action: str, message: str, level: str = "info"):
     db.commit()
 
 
-# --- 통계 ---
+# ── 통계 ─────────────────────────────────────────────────────────────────────
 
 @api.get("/stats")
 async def get_stats():
     db = next(get_db())
     return {
-        "doc_count": db.query(Document).count(),
+        "doc_count":       db.query(Document).count(),
         "knowledge_count": db.query(KnowledgeEntry).count(),
-        "task_count": db.query(Task).filter(Task.status == "pending").count(),
+        "task_count":      db.query(Task).filter(Task.status == "pending").count(),
     }
 
 @api.get("/health")
@@ -53,7 +72,7 @@ async def get_activity(limit: int = 30):
     ]
 
 
-# --- 수집 ---
+# ── 수집 ─────────────────────────────────────────────────────────────────────
 
 class UrlRequest(BaseModel):
     url: str
@@ -107,7 +126,7 @@ async def ingest_email(limit: int = 10):
     return {"ingested": len(ids), "doc_ids": ids}
 
 
-# --- 지식 처리 ---
+# ── 지식 처리 ─────────────────────────────────────────────────────────────────
 
 @api.post("/knowledge/process/{doc_id}")
 async def process_document(doc_id: int):
@@ -132,13 +151,76 @@ async def process_document(doc_id: int):
         log(db, "process", f"할 일 추출 실패: {e}", "error")
         tasks_data = []
     for t in tasks_data:
-        db.add(Task(title=t.get("title", ""), priority=t.get("priority", "medium"), assignee=t.get("assignee", "나")))
+        db.add(Task(
+            title=t.get("title", ""),
+            class_of_service=t.get("class_of_service", "standard"),
+            team=t.get("team", "미분류"),
+            assignee=t.get("assignee", "나"),
+            due_date=t.get("due_date"),
+        ))
     db.commit()
     log(db, "process", f"처리 완료 — 할 일 {len(tasks_data)}개 생성", "success")
     return {"knowledge_id": entry.id, "tasks_created": len(tasks_data)}
 
 
-# --- 메모리 ---
+# ── 위키 ──────────────────────────────────────────────────────────────────────
+
+@api.get("/wiki")
+async def list_wiki():
+    db = next(get_db())
+    entries = db.query(KnowledgeEntry).order_by(KnowledgeEntry.updated_at.desc()).all()
+    return [
+        {"id": e.id, "topic": e.topic,
+         "preview": e.content[:200] if e.content else "",
+         "updated_at": str(e.updated_at)}
+        for e in entries
+    ]
+
+@api.get("/wiki/{entry_id}")
+async def get_wiki(entry_id: int):
+    db = next(get_db())
+    entry = db.query(KnowledgeEntry).filter(KnowledgeEntry.id == entry_id).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="위키 항목을 찾을 수 없습니다.")
+    return {"id": entry.id, "topic": entry.topic, "content": entry.content,
+            "updated_at": str(entry.updated_at)}
+
+class WikiUpdate(BaseModel):
+    topic: str
+    content: str
+
+@api.put("/wiki/{entry_id}")
+async def update_wiki(entry_id: int, req: WikiUpdate):
+    db = next(get_db())
+    entry = db.query(KnowledgeEntry).filter(KnowledgeEntry.id == entry_id).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="위키 항목을 찾을 수 없습니다.")
+    entry.topic   = req.topic
+    entry.content = req.content
+    db.commit()
+    log(db, "wiki_edit", f"위키 수동 편집: {entry.topic}", "info")
+    return {"id": entry.id, "topic": entry.topic, "updated_at": str(entry.updated_at)}
+
+@api.post("/wiki/{entry_id}/reprocess")
+async def reprocess_wiki(entry_id: int):
+    db = next(get_db())
+    entry = db.query(KnowledgeEntry).filter(KnowledgeEntry.id == entry_id).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="위키 항목을 찾을 수 없습니다.")
+    log(db, "wiki_reprocess", f"LLM 재분석 시작: {entry.topic}")
+    try:
+        wiki = build_wiki_entry(entry.topic, entry.content)
+        entry.content = wiki["content"]
+        db.commit()
+        log(db, "wiki_reprocess", f"LLM 재분석 완료: {entry.topic}", "success")
+        return {"id": entry.id, "topic": entry.topic, "content": entry.content,
+                "updated_at": str(entry.updated_at)}
+    except Exception as e:
+        log(db, "wiki_reprocess", f"LLM 재분석 실패: {e}", "error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── 메모리 ────────────────────────────────────────────────────────────────────
 
 class MemoryRequest(BaseModel):
     content: str
@@ -162,40 +244,62 @@ async def memory_summary():
     return {"summary": get_summary()}
 
 
-# --- 할 일 ---
+# ── 할 일 ─────────────────────────────────────────────────────────────────────
 
 @api.get("/tasks")
 async def get_tasks(status: str = "all"):
     db = next(get_db())
-    if status == "all":
-        tasks = db.query(Task).order_by(Task.created_at.desc()).all()
-    else:
-        tasks = db.query(Task).filter(Task.status == status).order_by(Task.created_at.desc()).all()
-    return [{"id": t.id, "title": t.title, "priority": t.priority, "assignee": t.assignee, "status": t.status} for t in tasks]
+    q = db.query(Task)
+    if status != "all":
+        q = q.filter(Task.status == status)
+    tasks = q.order_by(Task.created_at.desc()).all()
+    return [
+        {"id": t.id, "title": t.title,
+         "class_of_service": t.class_of_service or "standard",
+         "team": t.team or "미분류",
+         "assignee": t.assignee,
+         "due_date": t.due_date,
+         "status": t.status}
+        for t in tasks
+    ]
 
 class TaskStatusUpdate(BaseModel):
-    status: str
+    status: str | None = None
+    class_of_service: str | None = None
+    team: str | None = None
 
 @api.patch("/tasks/{task_id}")
-async def update_task_status(task_id: int, req: TaskStatusUpdate):
+async def update_task(task_id: int, req: TaskStatusUpdate):
     db = next(get_db())
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="할 일을 찾을 수 없습니다.")
-    old_status = task.status
-    task.status = req.status
+    if req.status is not None:
+        old = task.status
+        task.status = req.status
+        log(db, "task_update", f"상태 변경: {task.title[:30]} [{old}→{req.status}]", "info")
+    if req.class_of_service is not None:
+        task.class_of_service = req.class_of_service
+    if req.team is not None:
+        task.team = req.team
     db.commit()
-    log(db, "task_update", f"상태 변경: {task.title[:30]} [{old_status} → {req.status}]", "info")
-    return {"id": task.id, "status": task.status}
+    return {"id": task.id, "status": task.status,
+            "class_of_service": task.class_of_service, "team": task.team}
 
 @api.post("/tasks/report")
 async def send_task_report():
     db = next(get_db())
-    tasks = db.query(Task).filter(Task.status == "pending").all()
-    task_list = [{"title": t.title, "priority": t.priority, "assignee": t.assignee} for t in tasks]
+    tasks = db.query(Task).all()
+    task_list = [
+        {"title": t.title, "class_of_service": t.class_of_service or "standard",
+         "team": t.team or "미분류", "assignee": t.assignee,
+         "due_date": t.due_date, "status": t.status}
+        for t in tasks
+    ]
     ok = send_daily_report(task_list)
-    log(db, "report", f"Telegram 보고 {'성공' if ok else '실패'} — {len(task_list)}개", "success" if ok else "error")
-    return {"sent": ok, "task_count": len(task_list)}
+    pending_count = sum(1 for t in task_list if t["status"] != "done")
+    log(db, "report", f"Telegram 보고 {'성공' if ok else '실패'} — {pending_count}건", "success" if ok else "error")
+    return {"sent": ok, "task_count": pending_count}
 
 
 app.include_router(api)
