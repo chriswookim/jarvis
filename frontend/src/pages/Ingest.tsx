@@ -9,6 +9,7 @@ interface IngestResult {
   title: string
   processed?: boolean
   processing?: boolean
+  autoProcessing?: boolean   // 백그라운드 자동 처리 중
   tasks_created?: number
 }
 
@@ -25,7 +26,7 @@ export default function Ingest() {
     setLoading(true); setError('')
     try {
       const r = await api.ingestFile(file)
-      setResults(prev => [{ ...r, processed: false }, ...prev])
+      setResults(prev => [{ ...r, autoProcessing: true }, ...prev])
     } catch { setError('파일 업로드에 실패했습니다.') }
     finally { setLoading(false) }
   }
@@ -35,7 +36,7 @@ export default function Ingest() {
     setLoading(true); setError('')
     try {
       const r = await api.ingestUrl(url.trim())
-      setResults(prev => [{ ...r, processed: false }, ...prev])
+      setResults(prev => [{ ...r, autoProcessing: true }, ...prev])
       setUrl('')
     } catch { setError('URL 수집에 실패했습니다.') }
     finally { setLoading(false) }
@@ -62,7 +63,7 @@ export default function Ingest() {
       if (r.ingested === 0) {
         setError(r.message ?? '읽지 않은 메일이 없습니다.')
       } else {
-        const newDocs = (r.doc_ids ?? []).map((id, i) => ({ id, title: `메일 ${i + 1}`, processed: false }))
+        const newDocs = (r.doc_ids ?? []).map((id, i) => ({ id, title: `메일 ${i + 1}`, autoProcessing: true }))
         setResults(prev => [...newDocs, ...prev])
       }
     } catch { setError('메일 수집에 실패했습니다.') }
@@ -157,12 +158,16 @@ export default function Ingest() {
                     animate={{ opacity: 1, x: 0 }}
                     className="py-3"
                   >
-                    {r.processing ? (
+                    {(r.processing || r.autoProcessing) ? (
                       <div className="flex items-center gap-3 bg-brand-subtle border border-brand/20 rounded-lg px-4 py-3">
                         <div className="w-4 h-4 border-2 border-brand border-t-transparent rounded-full animate-spin shrink-0" />
                         <div className="flex-1 min-w-0">
                           <p className="text-sm text-text-primary font-medium truncate">{r.title}</p>
-                          <p className="text-xs text-brand mt-0.5">LLM이 문서를 분석 중입니다... (10~30초 소요)</p>
+                          <p className="text-xs text-brand mt-0.5">
+                            {r.autoProcessing
+                              ? '백그라운드에서 LLM 분석 중... 홈의 활동 로그에서 진행상황을 확인하세요'
+                              : 'LLM이 문서를 분석 중입니다... (10~30초 소요)'}
+                          </p>
                         </div>
                       </div>
                     ) : (
@@ -177,7 +182,7 @@ export default function Ingest() {
                         </div>
                         {!r.processed && (
                           <Button size="sm" variant="secondary" onClick={() => handleProcess(r.id)}>
-                            지식 처리
+                            재처리
                           </Button>
                         )}
                         {r.processed && (

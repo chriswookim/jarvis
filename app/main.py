@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException
+from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -46,6 +46,39 @@ def log(db, action: str, message: str, level: str = "info"):
     db.commit()
 
 
+def auto_process(doc_id: int):
+    """수집 직후 백그라운드에서 위키 생성 + 태스크 추출."""
+    db = next(get_db())
+    doc = db.query(Document).filter(Document.id == doc_id).first()
+    if not doc:
+        return
+    log(db, "auto_process", f"자동 처리 시작: {doc.title}")
+    try:
+        wiki = build_wiki_entry(doc.title, doc.content)
+        entry = KnowledgeEntry(topic=wiki["topic"], content=wiki["content"])
+        db.add(entry)
+        doc.summary = wiki["content"][:500]
+        db.commit()
+        log(db, "auto_process", f"위키 생성 완료: {doc.title}", "success")
+    except Exception as e:
+        log(db, "auto_process", f"위키 생성 실패: {e}", "error")
+        return
+    try:
+        tasks_data = extract_tasks(doc.content)
+        for t in tasks_data:
+            db.add(Task(
+                title=t.get("title", ""),
+                class_of_service=t.get("class_of_service", "standard"),
+                team=t.get("team", "미분류"),
+                assignee=t.get("assignee", "나"),
+                due_date=t.get("due_date"),
+            ))
+        db.commit()
+        log(db, "auto_process", f"할 일 {len(tasks_data)}개 자동 추출 완료", "success")
+    except Exception as e:
+        log(db, "auto_process", f"할 일 추출 실패: {e}", "error")
+
+
 # ── 통계 ─────────────────────────────────────────────────────────────────────
 
 @api.get("/stats")
@@ -78,7 +111,7 @@ class UrlRequest(BaseModel):
     url: str
 
 @api.post("/ingest/file")
-async def ingest_file(file: UploadFile = File(...)):
+async def ingest_file(background: BackgroundTasks, file: UploadFile = File(...)):
     db = next(get_db())
     tmp_path = f"/tmp/{file.filename}"
     with open(tmp_path, "wb") as f:
@@ -92,11 +125,12 @@ async def ingest_file(file: UploadFile = File(...)):
         os.remove(tmp_path)
     doc = Document(source=result["source"], title=result["title"], content=result["content"])
     db.add(doc); db.commit()
-    log(db, "ingest_file", f"파일 수집 완료: {doc.title}", "success")
+    log(db, "ingest_file", f"파일 수집 완료, LLM 분석 예약: {doc.title}", "success")
+    background.add_task(auto_process, doc.id)
     return {"id": doc.id, "title": doc.title}
 
 @api.post("/ingest/url")
-async def ingest_url(req: UrlRequest):
+async def ingest_url(background: BackgroundTasks, req: UrlRequest):
     db = next(get_db())
     log(db, "ingest_url", f"URL 수집 시작: {req.url}")
     try:
@@ -106,11 +140,12 @@ async def ingest_url(req: UrlRequest):
         raise HTTPException(status_code=400, detail=str(e))
     doc = Document(source="web", title=result["title"], content=result["content"])
     db.add(doc); db.commit()
-    log(db, "ingest_url", f"URL 수집 완료: {doc.title}", "success")
+    log(db, "ingest_url", f"URL 수집 완료, LLM 분석 예약: {doc.title}", "success")
+    background.add_task(auto_process, doc.id)
     return {"id": doc.id, "title": doc.title}
 
 @api.post("/ingest/email")
-async def ingest_email(limit: int = 10):
+async def ingest_email(background: BackgroundTasks, limit: int = 10):
     db = next(get_db())
     log(db, "ingest_email", "메일 수집 시작...")
     emails = fetch_unread_emails(limit=limit)
@@ -122,7 +157,8 @@ async def ingest_email(limit: int = 10):
         doc = Document(source="email", title=e["title"], content=e["content"])
         db.add(doc); db.commit()
         ids.append(doc.id)
-    log(db, "ingest_email", f"메일 {len(ids)}개 수집 완료", "success")
+        background.add_task(auto_process, doc.id)
+    log(db, "ingest_email", f"메일 {len(ids)}개 수집 완료, LLM 분석 예약", "success")
     return {"ingested": len(ids), "doc_ids": ids}
 
 
