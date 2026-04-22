@@ -42,8 +42,14 @@ export const api = {
       method: 'POST',
     }),
 
-  getTasks: (status = 'pending') =>
-    req<{ id: number; title: string; priority: string; assignee: string }[]>(`/tasks?status=${status}`),
+  getTasks: (status = 'all') =>
+    req<{ id: number; title: string; priority: string; assignee: string; status: string }[]>(`/tasks?status=${status}`),
+
+  updateTask: (id: number, status: string) =>
+    req<{ id: number; status: string }>(`/tasks/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    }),
 
   sendReport: () => req<{ sent: boolean; task_count: number }>('/tasks/report', { method: 'POST' }),
 

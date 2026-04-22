@@ -165,10 +165,28 @@ async def memory_summary():
 # --- 할 일 ---
 
 @api.get("/tasks")
-async def get_tasks(status: str = "pending"):
+async def get_tasks(status: str = "all"):
     db = next(get_db())
-    tasks = db.query(Task).filter(Task.status == status).all()
-    return [{"id": t.id, "title": t.title, "priority": t.priority, "assignee": t.assignee} for t in tasks]
+    if status == "all":
+        tasks = db.query(Task).order_by(Task.created_at.desc()).all()
+    else:
+        tasks = db.query(Task).filter(Task.status == status).order_by(Task.created_at.desc()).all()
+    return [{"id": t.id, "title": t.title, "priority": t.priority, "assignee": t.assignee, "status": t.status} for t in tasks]
+
+class TaskStatusUpdate(BaseModel):
+    status: str
+
+@api.patch("/tasks/{task_id}")
+async def update_task_status(task_id: int, req: TaskStatusUpdate):
+    db = next(get_db())
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="할 일을 찾을 수 없습니다.")
+    old_status = task.status
+    task.status = req.status
+    db.commit()
+    log(db, "task_update", f"상태 변경: {task.title[:30]} [{old_status} → {req.status}]", "info")
+    return {"id": task.id, "status": task.status}
 
 @api.post("/tasks/report")
 async def send_task_report():
