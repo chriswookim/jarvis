@@ -177,6 +177,30 @@ JSON 배열만 반환하세요.""",
     return deduped, debug
 
 
+def lint_wiki(entries: list[dict]) -> str:
+    """모든 위키 항목 목록을 LLM으로 점검하여 이슈 보고."""
+    if len(entries) < 2:
+        return "위키 항목이 2개 미만입니다."
+    lines = [
+        f"[ID:{e['id']}] {e['topic']} (폴더:{e['folder']}, 수정:{(e.get('updated_at') or '')[:10]})"
+        for e in entries
+    ]
+    return chat(
+        prompt=f"""다음은 지식 위키의 전체 항목 목록입니다:
+
+{chr(10).join(lines)}
+
+아래 기준으로 lint(점검)를 수행하세요:
+1. **중복/유사 주제**: 합칠 수 있는 항목 쌍 (ID 명시, 병합 이유 설명)
+2. **오래된 항목**: 시의성 있는 주제인데 30일+ 미수정된 것 (재검토 권장)
+3. **고아 항목**: 다른 항목과 연관이 거의 없어 보이는 고립된 항목
+
+이슈가 있으면 항목 ID를 명시해 간결하게 보고하세요. 없으면 "이슈 없음"으로 답하세요.
+한국어로 작성하세요.""",
+        system="당신은 지식 관리 전문가입니다. 위키 항목 목록을 분석하여 품질 이슈를 보고합니다.",
+    )
+
+
 def extract_memories(title: str, content: str) -> list[str]:
     """문서에서 장기적으로 참고할 사실을 추출한다."""
     # 메모리는 문서 전반에 흩어져 있을 수 있으므로 청크별 처리

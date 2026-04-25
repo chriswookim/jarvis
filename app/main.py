@@ -52,15 +52,21 @@ def migrate_db():
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     migrate_db()
-    scheduler = asyncio.create_task(_email_scheduler_loop())
+    schedulers = [
+        asyncio.create_task(_email_scheduler_loop()),
+        asyncio.create_task(_wiki_scheduler_loop()),
+    ]
     with get_db() as db:
         log(db, "ingest_email", f"이메일 자동수집 스케줄러 시작 ({EMAIL_SCHEDULE_INTERVAL // 60}분 주기)")
+        log(db, "wiki_lint", "위키 lint 스케줄러 시작 (24시간 주기)")
     yield
-    scheduler.cancel()
-    try:
-        await scheduler
-    except asyncio.CancelledError:
-        pass
+    for s in schedulers:
+        s.cancel()
+    for s in schedulers:
+        try:
+            await s
+        except asyncio.CancelledError:
+            pass
 
 app = FastAPI(title="Jarvis", lifespan=lifespan)
 api = APIRouter(prefix="/api")
@@ -227,6 +233,41 @@ async def _email_scheduler_loop():
         await asyncio.sleep(EMAIL_SCHEDULE_INTERVAL)
 
 
+# ── 위키 Lint 스케줄러 ────────────────────────────────────────────────────────
+
+WIKI_LINT_INTERVAL = 24 * 60 * 60  # 24시간
+
+def _wiki_lint_run():
+    from app.modules.knowledge.wiki import lint_wiki
+    with get_db() as db:
+        entries = db.query(KnowledgeEntry).all()
+        if len(entries) < 2:
+            log(db, "wiki_lint", "위키 항목 수 부족, lint 건너뜀")
+            return
+        entry_list = [
+            {"id": e.id, "topic": e.topic,
+             "folder": e.folder or "일반",
+             "updated_at": fmt_dt(e.updated_at) or ""}
+            for e in entries
+        ]
+        log(db, "wiki_lint", f"위키 lint 시작 — {len(entries)}개 항목 점검")
+    try:
+        report = lint_wiki(entry_list)
+        level = "info" if "이슈 없음" in report else "success"
+        with get_db() as db:
+            log(db, "wiki_lint", f"lint 결과:\n{report}", level)
+    except Exception as e:
+        with get_db() as db:
+            log(db, "wiki_lint", f"lint 실패: {type(e).__name__}: {e}", "error")
+
+
+async def _wiki_scheduler_loop():
+    await asyncio.sleep(WIKI_LINT_INTERVAL)
+    while True:
+        await asyncio.to_thread(_wiki_lint_run)
+        await asyncio.sleep(WIKI_LINT_INTERVAL)
+
+
 # ── 통계 ─────────────────────────────────────────────────────────────────────
 
 @api.get("/stats")
@@ -374,9 +415,15 @@ async def process_document(doc_id: int):
 # ── 위키 ──────────────────────────────────────────────────────────────────────
 
 @api.get("/wiki")
-async def list_wiki():
+async def list_wiki(q: str = ""):
     with get_db() as db:
-        entries = db.query(KnowledgeEntry).order_by(KnowledgeEntry.updated_at.desc()).all()
+        query = db.query(KnowledgeEntry)
+        if q:
+            query = query.filter(
+                KnowledgeEntry.topic.contains(q) |
+                KnowledgeEntry.content.contains(q)
+            )
+        entries = query.order_by(KnowledgeEntry.updated_at.desc()).all()
         return [
             {"id": e.id, "topic": e.topic,
              "folder": e.folder or "일반",
@@ -425,6 +472,53 @@ async def update_wiki_folder(entry_id: int, req: FolderUpdate):
         db.commit()
         log(db, "wiki_folder", f"폴더 이동: '{entry.topic}' → {entry.folder}", "info")
         return {"id": entry.id, "folder": entry.folder}
+
+@api.post("/wiki/lint")
+async def manual_wiki_lint(background: BackgroundTasks):
+    background.add_task(_wiki_lint_run)
+    return {"status": "lint 시작됨"}
+
+@api.delete("/wiki/{entry_id}")
+async def delete_wiki(entry_id: int):
+    with get_db() as db:
+        entry = db.query(KnowledgeEntry).filter(KnowledgeEntry.id == entry_id).first()
+        if not entry:
+            raise HTTPException(status_code=404, detail="위키 항목을 찾을 수 없습니다.")
+        topic = entry.topic
+        db.delete(entry); db.commit()
+        log(db, "wiki_edit", f"위키 삭제: {topic}", "info")
+        return {"deleted": entry_id}
+
+@api.get("/wiki/{entry_id}/related")
+async def get_related_wiki(entry_id: int, limit: int = 5):
+    with get_db() as db:
+        entry = db.query(KnowledgeEntry).filter(KnowledgeEntry.id == entry_id).first()
+        if not entry:
+            raise HTTPException(status_code=404)
+        target_words = set(
+            w for w in (entry.topic + " " + (entry.content or "")[:500]).lower().split()
+            if len(w) > 1
+        )
+        others = db.query(KnowledgeEntry).filter(KnowledgeEntry.id != entry_id).all()
+        scored = []
+        for e in others:
+            words = set(
+                w for w in (e.topic + " " + (e.content or "")[:500]).lower().split()
+                if len(w) > 1
+            )
+            union = target_words | words
+            if not union:
+                continue
+            score = len(target_words & words) / len(union)
+            if score > 0.03:
+                scored.append((score, e))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [
+            {"id": e.id, "topic": e.topic,
+             "folder": e.folder or "일반",
+             "updated_at": fmt_dt(e.updated_at)}
+            for _, e in scored[:limit]
+        ]
 
 @api.post("/wiki/{entry_id}/reprocess")
 async def reprocess_wiki(entry_id: int):

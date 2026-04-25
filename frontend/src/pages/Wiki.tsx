@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import ReactMarkdown from 'react-markdown'
@@ -7,6 +7,9 @@ import { api, WikiEntry } from '@/api/client'
 import Button from '@/components/ui/Button'
 
 const DEFAULT_FOLDERS = ['이메일', '웹', '문서', '일반']
+const STALE_DAYS = 30
+
+type RelatedEntry = { id: number; topic: string; folder: string; updated_at: string }
 
 function timeAgo(dateStr: string) {
   const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000)
@@ -16,11 +19,25 @@ function timeAgo(dateStr: string) {
   return `${Math.floor(diff / 86400)}일 전`
 }
 
+function isStale(dateStr: string) {
+  return (Date.now() - new Date(dateStr).getTime()) / 86400000 > STALE_DAYS
+}
+
+function folderIcon(folder: string) {
+  if (folder === '이메일') return '📧'
+  if (folder === '웹') return '🌐'
+  if (folder === '문서') return '📄'
+  return '📁'
+}
+
 export default function Wiki() {
   const [entries, setEntries]               = useState<WikiEntry[]>([])
   const [selected, setSelected]             = useState<WikiEntry | null>(null)
+  const [related, setRelated]               = useState<RelatedEntry[]>([])
   const [loading, setLoading]               = useState(true)
   const [loadingEntry, setLoadingEntry]     = useState(false)
+  const [linting, setLinting]               = useState(false)
+  const [lintDone, setLintDone]             = useState(false)
   const [searchParams, setSearchParams] = useSearchParams()
   const search = searchParams.get('q') ?? ''
   const folderFilter = searchParams.get('folder')
@@ -34,27 +51,45 @@ export default function Wiki() {
   const [dirty, setDirty]                   = useState(false)
   const [saving, setSaving]                 = useState(false)
   const [reprocessing, setReprocessing]     = useState(false)
+  const [deleting, setDeleting]             = useState(false)
   const [movingFolder, setMovingFolder]     = useState(false)
   const [showFolderInput, setShowFolderInput] = useState(false)
   const [newFolderName, setNewFolderName]   = useState('')
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  useEffect(() => {
-    api.listWiki().then(setEntries).finally(() => setLoading(false))
+  const loadEntries = useCallback((q?: string) => {
+    api.listWiki(q || undefined).then(setEntries).finally(() => setLoading(false))
   }, [])
 
-  // 사용 중인 폴더 목록
+  useEffect(() => { loadEntries() }, [loadEntries])
+
+  // 본문 전체 검색 (서버사이드, 디바운스)
+  useEffect(() => {
+    if (searchTimer.current) clearTimeout(searchTimer.current)
+    if (search) {
+      searchTimer.current = setTimeout(() => loadEntries(search), 300)
+    } else {
+      loadEntries()
+    }
+  }, [search, loadEntries])
+
   const allFolders = Array.from(new Set([
     ...DEFAULT_FOLDERS,
     ...entries.map(e => e.folder || '일반'),
   ])).filter(f => entries.some(e => (e.folder || '일반') === f))
 
+  const filtered = entries.filter(e =>
+    !folderFilter || (e.folder || '일반') === folderFilter
+  )
+
   const selectEntry = useCallback(async (entry: WikiEntry) => {
     if (editing && dirty && !window.confirm('저장하지 않은 변경사항이 있습니다. 나가시겠습니까?')) return
-    setEditing(false); setDirty(false); setShowFolderInput(false)
+    setEditing(false); setDirty(false); setShowFolderInput(false); setRelated([])
     setLoadingEntry(true)
     try {
       const full = await api.getWiki(entry.id)
       setSelected(full)
+      api.getRelatedWiki(entry.id).then(setRelated).catch(() => {})
     } finally { setLoadingEntry(false) }
   }, [editing, dirty])
 
@@ -96,6 +131,26 @@ export default function Wiki() {
     } finally { setReprocessing(false) }
   }
 
+  const handleDelete = async () => {
+    if (!selected) return
+    if (!window.confirm(`"${selected.topic}" 항목을 삭제하시겠습니까?`)) return
+    setDeleting(true)
+    try {
+      await api.deleteWiki(selected.id)
+      setEntries(prev => prev.filter(e => e.id !== selected.id))
+      setSelected(null); setRelated([])
+    } finally { setDeleting(false) }
+  }
+
+  const handleLint = async () => {
+    setLinting(true)
+    try {
+      await api.triggerWikiLint()
+      setLintDone(true)
+      setTimeout(() => setLintDone(false), 3000)
+    } finally { setLinting(false) }
+  }
+
   const handleMoveFolder = async (folder: string) => {
     if (!selected) return
     setMovingFolder(true)
@@ -115,11 +170,6 @@ export default function Wiki() {
     setNewFolderName('')
   }
 
-  const filtered = entries.filter(e =>
-    (!folderFilter || (e.folder || '일반') === folderFilter) &&
-    (!search || e.topic.toLowerCase().includes(search.toLowerCase()))
-  )
-
   return (
     <div className="flex flex-1 overflow-hidden">
 
@@ -128,17 +178,36 @@ export default function Wiki() {
         <div className="px-4 pt-5 pb-3 border-b border-border-subtle shrink-0">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-text-primary">위키</h2>
-            <span className="text-xs text-text-muted bg-neutral-bg4 px-2 py-0.5 rounded-full">{entries.length}</span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleLint}
+                disabled={linting}
+                title="위키 Lint 실행 (중복·오래된 항목 점검)"
+                className={`text-xs px-2 py-0.5 rounded transition-colors ${
+                  lintDone
+                    ? 'text-status-success bg-status-success/10'
+                    : 'text-text-muted hover:text-text-primary hover:bg-neutral-bg4'
+                }`}
+              >
+                {linting ? '분석중…' : lintDone ? '✓ 완료' : '◎ Lint'}
+              </button>
+              <span className="text-xs text-text-muted bg-neutral-bg4 px-2 py-0.5 rounded-full">{entries.length}</span>
+            </div>
           </div>
           <input
             name="q"
-            aria-label="위키 검색"
+            aria-label="위키 본문 검색"
             autoComplete="off"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="검색..."
+            placeholder="본문 검색..."
             className="glass-input w-full px-3 py-2 text-xs rounded-lg"
           />
+          {search && (
+            <p className="text-xs text-text-muted mt-1.5 px-1">
+              {filtered.length}건 · 본문 전체 검색 중
+            </p>
+          )}
         </div>
 
         {/* 폴더 필터 */}
@@ -162,9 +231,7 @@ export default function Wiki() {
                     folderFilter === folder ? 'text-brand-light bg-brand-subtle' : 'text-text-muted hover:text-text-secondary hover:bg-neutral-bg3'
                   }`}
                 >
-                  <span>
-                    {folder === '이메일' ? '📧' : folder === '웹' ? '🌐' : folder === '문서' ? '📄' : '📁'} {folder}
-                  </span>
+                  <span>{folderIcon(folder)} {folder}</span>
                   <span>{count}</span>
                 </button>
               )
@@ -183,21 +250,29 @@ export default function Wiki() {
             </p>
           ) : (
             <ul className="px-2 space-y-0.5">
-              {filtered.map(entry => (
-                <li key={entry.id}>
-                  <button
-                    onClick={() => selectEntry(entry)}
-                    className={`w-full text-left px-3 py-2.5 rounded-lg transition-colors ${
-                      selected?.id === entry.id
-                        ? 'bg-brand-subtle text-brand-light'
-                        : 'hover:bg-neutral-bg3 text-text-secondary hover:text-text-primary'
-                    }`}
-                  >
-                    <p className="text-xs font-medium truncate leading-tight">{entry.topic}</p>
-                    <p className="text-xs text-text-muted mt-0.5">{timeAgo(entry.updated_at)}</p>
-                  </button>
-                </li>
-              ))}
+              {filtered.map(entry => {
+                const stale = isStale(entry.updated_at)
+                return (
+                  <li key={entry.id}>
+                    <button
+                      onClick={() => selectEntry(entry)}
+                      className={`w-full text-left px-3 py-2.5 rounded-lg transition-colors ${
+                        selected?.id === entry.id
+                          ? 'bg-brand-subtle text-brand-light'
+                          : 'hover:bg-neutral-bg3 text-text-secondary hover:text-text-primary'
+                      }`}
+                    >
+                      <p className="text-xs font-medium truncate leading-tight">{entry.topic}</p>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className="text-xs text-text-muted">{timeAgo(entry.updated_at)}</span>
+                        {stale && (
+                          <span className="text-xs text-status-warning opacity-80">오래됨</span>
+                        )}
+                      </div>
+                    </button>
+                  </li>
+                )
+              })}
             </ul>
           )}
         </div>
@@ -260,7 +335,14 @@ export default function Wiki() {
               {/* 헤더 */}
               <div className="flex items-start justify-between px-8 py-5 border-b border-border-subtle shrink-0 bg-neutral-bg2">
                 <div>
-                  <h1 className="text-xl font-semibold text-text-primary">{selected.topic}</h1>
+                  <div className="flex items-center gap-2">
+                    <h1 className="text-xl font-semibold text-text-primary">{selected.topic}</h1>
+                    {isStale(selected.updated_at) && (
+                      <span className="text-xs text-status-warning bg-status-warning/10 px-2 py-0.5 rounded-full">
+                        {STALE_DAYS}일+ 미수정
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-2 mt-1">
                     <p className="text-xs text-text-muted">마지막 수정 {timeAgo(selected.updated_at)}</p>
                     <span className="text-text-muted">·</span>
@@ -270,7 +352,7 @@ export default function Wiki() {
                         onClick={() => setShowFolderInput(v => !v)}
                         className="text-xs text-text-muted hover:text-text-secondary bg-neutral-bg4 hover:bg-neutral-bg5 px-2 py-0.5 rounded transition-colors flex items-center gap-1"
                       >
-                        {selected.folder === '이메일' ? '📧' : selected.folder === '웹' ? '🌐' : selected.folder === '문서' ? '📄' : '📁'}
+                        {folderIcon(selected.folder || '일반')}
                         {selected.folder || '일반'}
                         <span className="opacity-50">▾</span>
                       </button>
@@ -284,7 +366,7 @@ export default function Wiki() {
                                 selected.folder === f ? 'text-brand-light' : 'text-text-secondary'
                               }`}
                             >
-                              {f === '이메일' ? '📧' : f === '웹' ? '🌐' : f === '문서' ? '📄' : '📁'} {f}
+                              {folderIcon(f)} {f}
                             </button>
                           ))}
                           <div className="border-t border-border-subtle mt-1 pt-1 px-2">
@@ -296,7 +378,7 @@ export default function Wiki() {
                                 onChange={e => setNewFolderName(e.target.value)}
                                 onKeyDown={e => e.key === 'Enter' && handleNewFolder()}
                                 placeholder="새 폴더..."
-                                className="flex-1 bg-neutral-bg4 text-xs px-2 py-1 rounded outline-none text-text-primary placeholder:text-text-muted"
+                                className="flex-1 bg-neutral-bg4 text-xs px-2 py-1 rounded outline-none text-text-primary placeholder:text-text-muted focus-visible:ring-1 focus-visible:ring-brand"
                                 autoFocus
                               />
                               <button
@@ -313,31 +395,67 @@ export default function Wiki() {
                   </div>
                 </div>
                 <div className="flex gap-2 shrink-0 mt-0.5">
+                  <button
+                    onClick={handleDelete}
+                    disabled={deleting}
+                    className="text-xs px-2.5 py-1.5 rounded text-text-muted hover:text-status-error hover:bg-status-error/10 transition-colors"
+                  >
+                    삭제
+                  </button>
                   <Button variant="secondary" size="sm" onClick={startEdit}>✏️ 편집</Button>
                   <Button size="sm" onClick={handleReprocess} loading={reprocessing}>✦ LLM 재분석</Button>
                 </div>
               </div>
+
               {/* 본문 */}
               <div className="flex-1 overflow-y-auto px-8 py-8">
-                <div className="max-w-3xl prose prose-invert prose-sm
-                  prose-headings:text-text-primary prose-headings:font-semibold prose-headings:mb-3
-                  prose-h2:text-base prose-h2:mt-8 prose-h2:border-b prose-h2:border-border-subtle prose-h2:pb-2
-                  prose-h3:text-sm prose-h3:mt-6
-                  prose-p:text-text-secondary prose-p:leading-relaxed prose-p:my-2
-                  prose-a:text-brand-light prose-a:no-underline hover:prose-a:underline
-                  prose-strong:text-text-primary
-                  prose-code:text-brand-light prose-code:bg-neutral-bg4 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs
-                  prose-pre:bg-neutral-bg3 prose-pre:border prose-pre:border-border-subtle prose-pre:rounded-lg
-                  prose-blockquote:border-l-2 prose-blockquote:border-brand prose-blockquote:text-text-muted prose-blockquote:pl-4
-                  prose-li:text-text-secondary prose-li:my-0.5
-                  prose-ul:my-2 prose-ol:my-2
-                  prose-hr:border-border-subtle prose-hr:my-6
-                  prose-table:text-text-secondary prose-table:text-sm
-                  prose-th:text-text-primary prose-th:border prose-th:border-border prose-th:px-3 prose-th:py-1.5
-                  prose-td:border prose-td:border-border-subtle prose-td:px-3 prose-td:py-1.5">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {selected.content || '*내용이 없습니다.*'}
-                  </ReactMarkdown>
+                <div className="max-w-3xl">
+                  <div className="prose prose-invert prose-sm
+                    prose-headings:text-text-primary prose-headings:font-semibold prose-headings:mb-3
+                    prose-h2:text-base prose-h2:mt-8 prose-h2:border-b prose-h2:border-border-subtle prose-h2:pb-2
+                    prose-h3:text-sm prose-h3:mt-6
+                    prose-p:text-text-secondary prose-p:leading-relaxed prose-p:my-2
+                    prose-a:text-brand-light prose-a:no-underline hover:prose-a:underline
+                    prose-strong:text-text-primary
+                    prose-code:text-brand-light prose-code:bg-neutral-bg4 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs
+                    prose-pre:bg-neutral-bg3 prose-pre:border prose-pre:border-border-subtle prose-pre:rounded-lg
+                    prose-blockquote:border-l-2 prose-blockquote:border-brand prose-blockquote:text-text-muted prose-blockquote:pl-4
+                    prose-li:text-text-secondary prose-li:my-0.5
+                    prose-ul:my-2 prose-ol:my-2
+                    prose-hr:border-border-subtle prose-hr:my-6
+                    prose-table:text-text-secondary prose-table:text-sm
+                    prose-th:text-text-primary prose-th:border prose-th:border-border prose-th:px-3 prose-th:py-1.5
+                    prose-td:border prose-td:border-border-subtle prose-td:px-3 prose-td:py-1.5">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {selected.content || '*내용이 없습니다.*'}
+                    </ReactMarkdown>
+                  </div>
+
+                  {/* 관련 항목 */}
+                  {related.length > 0 && (
+                    <div className="mt-10 pt-6 border-t border-border-subtle">
+                      <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-3">관련 항목</h3>
+                      <div className="grid grid-cols-2 gap-2">
+                        {related.map(r => (
+                          <button
+                            key={r.id}
+                            onClick={() => {
+                              const entry = entries.find(e => e.id === r.id)
+                              if (entry) selectEntry(entry)
+                            }}
+                            className="text-left p-3 bg-neutral-bg3 hover:bg-neutral-bg4 rounded-lg transition-colors group"
+                          >
+                            <p className="text-xs font-medium text-text-primary truncate group-hover:text-brand-light transition-colors">
+                              {r.topic}
+                            </p>
+                            <p className="text-xs text-text-muted mt-0.5">
+                              {folderIcon(r.folder)} {r.folder} · {timeAgo(r.updated_at)}
+                            </p>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </motion.div>

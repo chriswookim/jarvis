@@ -88,7 +88,7 @@ export const api = {
     }),
 
   // 위키
-  listWiki: () => req<WikiEntry[]>('/wiki'),
+  listWiki: (q?: string) => req<WikiEntry[]>(q ? `/wiki?q=${encodeURIComponent(q)}` : '/wiki'),
   getWiki: (id: number) => req<WikiEntry>(`/wiki/${id}`),
   updateWiki: (id: number, topic: string, content: string) =>
     req<WikiEntry>(`/wiki/${id}`, {
@@ -102,6 +102,12 @@ export const api = {
     }),
   reprocessWiki: (id: number) =>
     req<WikiEntry>(`/wiki/${id}/reprocess`, { method: 'POST' }),
+  deleteWiki: (id: number) =>
+    req<{ deleted: number }>(`/wiki/${id}`, { method: 'DELETE' }),
+  getRelatedWiki: (id: number) =>
+    req<{ id: number; topic: string; folder: string; updated_at: string }[]>(`/wiki/${id}/related`),
+  triggerWikiLint: () =>
+    req<{ status: string }>('/wiki/lint', { method: 'POST' }),
 
   // 할 일
   getTasks: (status = 'all') => req<Task[]>(`/tasks?status=${status}`),
