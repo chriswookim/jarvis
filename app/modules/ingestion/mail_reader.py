@@ -1,5 +1,6 @@
 import imaplib
 import email
+import ssl
 from email.header import decode_header
 from app.config import settings
 
@@ -42,8 +43,13 @@ def fetch_unread_emails(limit: int = 10) -> list[dict]:
     if not settings.mail_user or not settings.mail_password:
         return []
 
+    # 자체 서명 인증서(NAS) 허용
+    ssl_ctx = ssl.create_default_context()
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode = ssl.CERT_NONE
+
     results = []
-    with imaplib.IMAP4_SSL(settings.mail_imap_host, settings.mail_imap_port) as imap:
+    with imaplib.IMAP4_SSL(settings.mail_imap_host, settings.mail_imap_port, ssl_context=ssl_ctx) as imap:
         imap.login(settings.mail_user, settings.mail_password)
         imap.select(settings.mail_folder)
 
@@ -51,7 +57,7 @@ def fetch_unread_emails(limit: int = 10) -> list[dict]:
         ids = msg_ids[0].split()[-limit:]
 
         for mid in reversed(ids):
-            _, data = imap.fetch(mid, "(RFC822)")
+            _, data = imap.fetch(mid, "(BODY.PEEK[])")  # PEEK: 읽음 처리 안 함
             raw = data[0][1]
             msg = email.message_from_bytes(raw)
 

@@ -6,7 +6,11 @@
 
 body {
   @apply bg-neutral-bg1 text-text-primary font-sans antialiased;
-  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+button, a, [role="button"] {
+  touch-action: manipulation;
 }
 
 *:focus-visible {
@@ -17,6 +21,14 @@ body {
 ::-webkit-scrollbar-track { @apply bg-neutral-bg2; }
 ::-webkit-scrollbar-thumb { @apply bg-neutral-bg5 rounded-full; }
 
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 @layer components {
   .glass-card {
     @apply backdrop-blur-md bg-white/5 border border-white/10 rounded-xl;
@@ -24,7 +36,11 @@ body {
   .glass-input {
     @apply bg-neutral-bg3 border border-border rounded-lg px-3 py-2 text-sm
            text-text-primary placeholder:text-text-muted
-           focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent
-           transition-all;
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:border-transparent
+           transition-colors;
   }
+}
+
+select {
+  color-scheme: dark;
 }

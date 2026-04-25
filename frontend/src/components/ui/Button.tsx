@@ -22,7 +22,7 @@ export default function Button({
       whileHover={{ scale: disabled || loading ? 1 : 1.02 }}
       whileTap={{ scale: disabled || loading ? 1 : 0.97 }}
       className={clsx(
-        'inline-flex items-center justify-center gap-2 font-medium rounded-lg transition-colors',
+        'inline-flex items-center justify-center gap-2 font-medium rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-bg1 focus-visible:outline-none',
         size === 'sm' ? 'px-3 py-1.5 text-xs' : 'px-4 py-2 text-sm',
         variant === 'primary' && 'bg-brand hover:bg-brand-hover text-white shadow-glow',
         variant === 'secondary' && 'bg-neutral-bg4 hover:bg-neutral-bg5 text-text-primary border border-border',

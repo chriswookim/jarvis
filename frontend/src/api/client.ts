@@ -1,10 +1,24 @@
 const BASE = '/api'
 
+function getToken() { return localStorage.getItem('jarvis_token') ?? '' }
+export function clearToken() { localStorage.removeItem('jarvis_token') }
+
 async function req<T>(path: string, options?: RequestInit): Promise<T> {
+  const isFormData = options?.body instanceof FormData
+  const baseHeaders: Record<string, string> = isFormData ? {} : { 'Content-Type': 'application/json' }
+  const token = getToken()
+  if (token) baseHeaders['Authorization'] = `Bearer ${token}`
+
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...options,
+    headers: { ...baseHeaders, ...(options?.headers as Record<string, string> ?? {}) },
   })
+
+  if (res.status === 401) {
+    clearToken()
+    window.location.href = '/'
+    throw new Error('인증이 만료되었습니다')
+  }
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
@@ -20,18 +34,25 @@ export interface Task {
   assignee: string
   due_date: string | null
   status: TaskStatus
+  confirmed: boolean
+  completed_at: string | null
+  created_at: string
 }
 
 export interface WikiEntry {
   id: number
   topic: string
   content: string
+  folder: string
   preview?: string
   updated_at: string
 }
 
 export const api = {
-  stats: () => req<{ doc_count: number; knowledge_count: number; task_count: number }>('/stats'),
+  login: (password: string) =>
+    req<{ token: string }>('/login', { method: 'POST', body: JSON.stringify({ password }) }),
+
+  stats: () => req<{ doc_count: number; knowledge_count: number; task_count: number; pending_review: number }>('/stats'),
 
   activity: (params?: { limit?: number; level?: string; action?: string; q?: string }) => {
     const p = new URLSearchParams()
@@ -47,11 +68,7 @@ export const api = {
   ingestFile: (file: File) => {
     const form = new FormData()
     form.append('file', file)
-    return req<{ id: number; title: string }>('/ingest/file', {
-      method: 'POST',
-      headers: {},
-      body: form,
-    })
+    return req<{ id: number; title: string }>('/ingest/file', { method: 'POST', body: form })
   },
 
   ingestEmail: (limit = 10) =>
@@ -78,17 +95,25 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ topic, content }),
     }),
+  updateWikiFolder: (id: number, folder: string) =>
+    req<{ id: number; folder: string }>(`/wiki/${id}/folder`, {
+      method: 'PUT',
+      body: JSON.stringify({ folder }),
+    }),
   reprocessWiki: (id: number) =>
     req<WikiEntry>(`/wiki/${id}/reprocess`, { method: 'POST' }),
 
   // 할 일
   getTasks: (status = 'all') => req<Task[]>(`/tasks?status=${status}`),
+  getUnconfirmedTasks: () => req<Task[]>('/tasks/unconfirmed'),
+  confirmTask: (id: number) => req<Task>(`/tasks/${id}/confirm`, { method: 'POST' }),
+  confirmAllTasks: () => req<{ confirmed: number }>('/tasks/confirm-all', { method: 'POST' }),
 
   createTask: (data: { title: string; class_of_service: string; team: string; assignee?: string; due_date?: string }) =>
     req<Task>('/tasks', { method: 'POST', body: JSON.stringify(data) }),
 
-  updateTask: (id: number, patch: { status?: string; class_of_service?: string; team?: string }) =>
-    req<{ id: number; status: string; class_of_service: string; team: string }>(`/tasks/${id}`, {
+  updateTask: (id: number, patch: Partial<{ status: string; class_of_service: string; team: string; title: string; assignee: string; due_date: string }>) =>
+    req<Task>(`/tasks/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),

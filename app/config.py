@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     mail_folder: str = "INBOX"
     app_env: str = "production"
     data_dir: str = "/app/data"
+    app_password: str = "jarvis2024"
+    secret_key: str = "jarvis-secret-change-me"
 
     class Config:
         env_file = ".env"

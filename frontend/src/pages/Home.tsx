@@ -34,7 +34,7 @@ function timeAgo(dateStr: string) {
 }
 
 export default function Home() {
-  const [stats, setStats] = useState({ doc_count: 0, knowledge_count: 0, task_count: 0 })
+  const [stats, setStats] = useState({ doc_count: 0, knowledge_count: 0, task_count: 0, pending_review: 0 })
   const [tasks, setTasks] = useState<Task[]>([])
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
@@ -66,10 +66,11 @@ export default function Home() {
           {[0, 1, 2].map(i => <div key={i} className="glass-card p-5 h-20 animate-pulse bg-neutral-bg3" />)}
         </div>
       ) : (
-        <motion.div variants={item} className="grid grid-cols-3 gap-4">
+        <motion.div variants={item} className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <StatCard label="총 문서" value={stats.doc_count} icon="📄" />
           <StatCard label="지식 항목" value={stats.knowledge_count} icon="◎" color="text-status-info" />
           <StatCard label="대기 중인 할 일" value={stats.task_count} icon="✓" color="text-status-warning" />
+          <StatCard label="검토 대기" value={stats.pending_review} icon="📋" color={stats.pending_review > 0 ? "text-status-error" : "text-text-muted"} />
         </motion.div>
       )}
 

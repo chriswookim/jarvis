@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, func
+from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, func
 from app.database import Base
 
 
@@ -16,6 +16,7 @@ class KnowledgeEntry(Base):
     id = Column(Integer, primary_key=True, index=True)
     topic = Column(String(200), index=True)
     content = Column(Text)
+    folder = Column(String(100), default="일반")
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
 class Task(Base):
@@ -23,11 +24,13 @@ class Task(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(500))
     description = Column(Text)
-    class_of_service = Column(String(20), default="standard")  # expedite / fixed_date / standard / intangible
+    class_of_service = Column(String(20), default="standard")
     team = Column(String(50), default="미분류")
     assignee = Column(String(100))
-    due_date = Column(String(20))   # YYYY-MM-DD
+    due_date = Column(String(20))
     status = Column(String(20), default="pending")
+    confirmed = Column(Boolean, default=True)
+    completed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=func.now())
 
 class ActivityLog(Base):

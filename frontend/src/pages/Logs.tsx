@@ -124,10 +124,12 @@ export default function Logs() {
       {/* 필터 바 */}
       <div className="flex flex-wrap gap-2">
         <input
+          name="q"
+          aria-label="로그 검색"
           value={search}
           onChange={e => handleSearch(e.target.value)}
           placeholder="메시지 검색..."
-          className="glass-input px-3 py-1.5 text-sm w-56 outline-none"
+          className="glass-input px-3 py-1.5 text-sm w-56"
         />
 
         <div className="flex gap-1 bg-neutral-bg3 p-1 rounded-lg">
@@ -142,9 +144,11 @@ export default function Logs() {
         </div>
 
         <select
+          name="action"
+          aria-label="작업 필터"
           value={actionFilter}
           onChange={e => setActionFilter(e.target.value)}
-          className="glass-input px-3 py-1.5 text-xs text-text-secondary bg-neutral-bg3 rounded-lg border border-border-subtle cursor-pointer outline-none"
+          className="glass-input px-3 py-1.5 text-xs text-text-secondary bg-neutral-bg3 rounded-lg border border-border-subtle cursor-pointer"
         >
           <option value="">전체 작업</option>
           {actions.map(a => (
@@ -153,9 +157,11 @@ export default function Logs() {
         </select>
 
         <select
+          name="limit"
+          aria-label="표시 건수"
           value={limit}
           onChange={e => setLimit(Number(e.target.value))}
-          className="glass-input px-3 py-1.5 text-xs text-text-secondary bg-neutral-bg3 rounded-lg border border-border-subtle cursor-pointer outline-none"
+          className="glass-input px-3 py-1.5 text-xs text-text-secondary bg-neutral-bg3 rounded-lg border border-border-subtle cursor-pointer"
         >
           {[50, 100, 200, 500].map(n => (
             <option key={n} value={n}>최근 {n}건</option>

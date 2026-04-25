@@ -18,7 +18,7 @@ export default function StatCard({ label, value, icon, color = 'text-brand' }: S
         <span className={`text-lg ${color}`}>{icon}</span>
       </div>
       <div>
-        <p className="text-2xl font-semibold text-text-primary">{value}</p>
+        <p className="text-2xl font-semibold text-text-primary tabular-nums">{value}</p>
         <p className="text-xs text-text-muted mt-0.5">{label}</p>
       </div>
     </motion.div>

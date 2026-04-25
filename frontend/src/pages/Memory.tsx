@@ -56,6 +56,8 @@ export default function Memory() {
       <Card title="메모리 검색">
         <div className="flex gap-2">
           <input
+            name="q"
+            aria-label="메모리 검색"
             className="glass-input flex-1"
             placeholder="검색어를 입력하세요..."
             value={query}
@@ -100,7 +102,10 @@ export default function Memory() {
       {/* 메모리 추가 */}
       <Card title="메모리 추가">
         <div className="space-y-3">
+          <label htmlFor="new-memory" className="sr-only">메모리 내용</label>
           <textarea
+            id="new-memory"
+            name="memory"
             className="glass-input w-full resize-none"
             rows={3}
             placeholder="기억할 내용을 입력하세요 (예: 회장님은 보고서를 간결하게 선호하십니다)"

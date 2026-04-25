@@ -13,14 +13,22 @@ def get_client() -> OpenAI:
     return _client
 
 def chat(prompt: str, system: str = "", model: str | None = None) -> str:
+    used_model = model or settings.zen_model
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
     resp = get_client().chat.completions.create(
-        model=model or settings.zen_model,
+        model=used_model,
         messages=messages,
         max_tokens=2048,
     )
-    return resp.choices[0].message.content or ""
+    content = resp.choices[0].message.content
+    if not content:
+        finish = resp.choices[0].finish_reason
+        raise RuntimeError(
+            f"LLM 빈 응답 — model={used_model}, finish_reason={finish}, "
+            f"prompt={len(prompt)}자, system={len(system)}자"
+        )
+    return content

@@ -92,10 +92,14 @@ export default function Ingest() {
         {/* 파일 업로드 */}
         <Card title="파일 업로드">
           <div
+            role="button"
+            tabIndex={loading ? -1 : 0}
+            aria-label="파일 선택 또는 드래그 업로드"
             onDragOver={e => { e.preventDefault(); setDragging(true) }}
             onDragLeave={() => setDragging(false)}
             onDrop={onDrop}
             onClick={() => fileRef.current?.click()}
+            onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && fileRef.current?.click()}
             className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
               dragging ? 'border-brand bg-brand-subtle' : 'border-border hover:border-border-strong'
             } ${loading ? 'pointer-events-none opacity-50' : ''}`}
@@ -121,12 +125,16 @@ export default function Ingest() {
         <Card title="URL 수집">
           <div className="space-y-3">
             <input
+              type="url"
+              name="url"
+              autoComplete="url"
               className="glass-input w-full"
               placeholder="https://..."
               value={url}
               onChange={e => setUrl(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleUrl()}
               disabled={loading}
+              spellCheck={false}
             />
             <Button onClick={handleUrl} loading={loading} className="w-full">
               수집하기
@@ -137,6 +145,7 @@ export default function Ingest() {
 
       {error && (
         <motion.p
+          role="alert"
           initial={{ opacity: 0, y: -4 }}
           animate={{ opacity: 1, y: 0 }}
           className="text-sm text-status-error bg-status-error/10 border border-status-error/20 rounded-lg px-4 py-2.5"
