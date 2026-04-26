@@ -137,7 +137,11 @@ def extract_tasks(content: str, memories: list = None) -> tuple[list, str]:
 ※ 본인(나) 업무는 team을 "{MY_TEAM}"으로 지정하세요.{memory_ctx}
 
 반환 형식: JSON 배열
-각 항목: title / class_of_service / team / assignee / due_date(YYYY-MM-DD 또는 null)
+각 항목: title / class_of_service / team / assignee / due_date(YYYY-MM-DD 또는 null) / project(프로젝트명 또는 null)
+
+project 분류:
+- 여러 할 일이 하나의 상위 목표·이니셔티브에 속하면 같은 project명 사용 (예: "홈페이지 개편", "2026 워크숍")
+- 단일·루틴 업무는 project: null
 
 정말 할 일이 없으면: []
 

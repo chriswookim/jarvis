@@ -26,10 +26,10 @@ const WIP_LIMIT = 5
 const DONE_HIDE_DAYS = 7
 
 interface NewTaskForm {
-  title: string; class_of_service: CoS; team: string; assignee: string; due_date: string
+  title: string; class_of_service: CoS; team: string; assignee: string; due_date: string; project: string
 }
 const EMPTY_FORM: NewTaskForm = {
-  title: '', class_of_service: 'standard', team: '기획홍보팀', assignee: '나', due_date: '',
+  title: '', class_of_service: 'standard', team: '기획홍보팀', assignee: '나', due_date: '', project: '',
 }
 
 function isSimilarTitle(a: string, b: string): boolean {
@@ -38,42 +38,42 @@ function isSimilarTitle(a: string, b: string): boolean {
   const wa = norm(a).split(' ').filter(w => w.length > 1)
   const wb = new Set(norm(b).split(' ').filter(w => w.length > 1))
   if (wa.length === 0) return false
-  const overlap = wa.filter(w => wb.has(w)).length
-  return overlap / wa.length >= 0.6
+  return wa.filter(w => wb.has(w)).length / wa.length >= 0.6
 }
 
 function isDoneOld(task: Task): boolean {
-  if (task.status !== 'done') return false
-  if (!task.completed_at) return false
-  const days = (Date.now() - new Date(task.completed_at).getTime()) / 86400000
-  return days > DONE_HIDE_DAYS
+  if (task.status !== 'done' || !task.completed_at) return false
+  return (Date.now() - new Date(task.completed_at).getTime()) / 86400000 > DONE_HIDE_DAYS
 }
 
 export default function Tasks() {
   const [tasks, setTasks]               = useState<Task[]>([])
   const [unconfirmed, setUnconfirmed]   = useState<Task[]>([])
   const [searchParams, setSearchParams] = useSearchParams()
-  const cosFilter = (searchParams.get('cos') as CoS | null) ?? 'all'
-  const teamFilter = searchParams.get('team') ?? 'all'
-  const setCosFilter = (v: CoS | 'all') =>
-    setSearchParams(p => { p.set('cos', v); return p }, { replace: true })
-  const setTeamFilter = (v: string) =>
-    setSearchParams(p => { p.set('team', v); return p }, { replace: true })
-  const [sending, setSending]           = useState(false)
-  const [sent, setSent]                 = useState(false)
-  const [loading, setLoading]           = useState(true)
-  const [error, setError]               = useState<string | null>(null)
-  const [dragOverCol, setDragOverCol]   = useState<TaskStatus | null>(null)
-  const [showOldDone, setShowOldDone]   = useState(false)
+  const cosFilter     = (searchParams.get('cos') as CoS | null) ?? 'all'
+  const teamFilter    = searchParams.get('team') ?? 'all'
+  const projectFilter = searchParams.get('project') ?? 'all'
+  const setCosFilter     = (v: CoS | 'all') => setSearchParams(p => { p.set('cos', v); return p }, { replace: true })
+  const setTeamFilter    = (v: string)       => setSearchParams(p => { p.set('team', v); return p }, { replace: true })
+  const setProjectFilter = (v: string)       => setSearchParams(p => { p.set('project', v); return p }, { replace: true })
+
+  const [viewMode, setViewMode]           = useState<'cos' | 'project'>('cos')
+  const [selectedIds, setSelectedIds]     = useState<Set<number>>(new Set())
+  const [bulkConfirming, setBulkConfirming] = useState(false)
+  const [bulkDeleting, setBulkDeleting]   = useState(false)
+  const [sending, setSending]             = useState(false)
+  const [sent, setSent]                   = useState(false)
+  const [loading, setLoading]             = useState(true)
+  const [error, setError]                 = useState<string | null>(null)
+  const [dragOverCol, setDragOverCol]     = useState<TaskStatus | null>(null)
+  const [showOldDone, setShowOldDone]     = useState(false)
   const [confirmingAll, setConfirmingAll] = useState(false)
   const draggingId = useRef<number | null>(null)
 
   const [showForm, setShowForm] = useState(false)
   const [form, setForm]         = useState<NewTaskForm>(EMPTY_FORM)
   const [creating, setCreating] = useState(false)
-
-  // 검토 중인 태스크의 편집 상태
-  const [editMap, setEditMap] = useState<Record<number, Partial<Task>>>({})
+  const [editMap, setEditMap]   = useState<Record<number, Partial<Task>>>({})
 
   const loadAll = () => {
     setLoading(true)
@@ -82,7 +82,6 @@ export default function Tasks() {
       .catch(e => setError(String(e)))
       .finally(() => setLoading(false))
   }
-
   useEffect(() => { loadAll() }, [])
 
   const allTeams = [
@@ -90,12 +89,16 @@ export default function Tasks() {
     ...TEAMS.filter(t => tasks.some(task => task.team === t)),
     ...Array.from(new Set(tasks.map(t => t.team).filter(t => t && !TEAMS.includes(t)))),
   ]
+  const allProjects = Array.from(
+    new Set(tasks.map(t => t.project).filter((p): p is string => !!p))
+  ).sort()
 
   const visibleTasks = (status: TaskStatus) =>
     tasks.filter(t =>
       t.status === status &&
       (cosFilter === 'all' || t.class_of_service === cosFilter) &&
       (teamFilter === 'all' || t.team === teamFilter) &&
+      (projectFilter === 'all' || t.project === projectFilter || (projectFilter === '__none__' && !t.project)) &&
       (status !== 'done' || showOldDone || !isDoneOld(t))
     )
 
@@ -121,6 +124,7 @@ export default function Tasks() {
         title: form.title.trim(), class_of_service: form.class_of_service,
         team: form.team, assignee: form.assignee || '나',
         due_date: form.due_date || undefined,
+        project: form.project.trim() || undefined,
       })
       setTasks(prev => [created, ...prev])
       setForm(EMPTY_FORM); setShowForm(false)
@@ -134,38 +138,85 @@ export default function Tasks() {
 
   // ── 검토 패널 핸들러 ───────────────────────────────────────
   const getEdit = (task: Task) => ({ ...task, ...(editMap[task.id] ?? {}) } as Task)
-
   const setEdit = (id: number, patch: Partial<Task>) =>
     setEditMap(prev => ({ ...prev, [id]: { ...(prev[id] ?? {}), ...patch } }))
 
-  const handleConfirm = async (task: Task) => {
-    const edited = getEdit(task)
-    // 편집된 필드 먼저 저장
+  const buildPatch = (task: Task, edited: Task): Parameters<typeof api.updateTask>[1] => {
     const patch: Parameters<typeof api.updateTask>[1] = {}
     if (edited.title !== task.title) patch.title = edited.title
     if (edited.class_of_service !== task.class_of_service) patch.class_of_service = edited.class_of_service
     if (edited.team !== task.team) patch.team = edited.team
     if (edited.assignee !== task.assignee) patch.assignee = edited.assignee
     if (edited.due_date !== task.due_date) patch.due_date = edited.due_date ?? ''
+    if (edited.project !== task.project) patch.project = edited.project ?? ''
+    return patch
+  }
+
+  const handleConfirm = async (task: Task) => {
+    const edited = getEdit(task)
+    const patch = buildPatch(task, edited)
     if (Object.keys(patch).length > 0) await api.updateTask(task.id, patch)
     const confirmed = await api.confirmTask(task.id)
     setTasks(prev => [confirmed, ...prev])
     setUnconfirmed(prev => prev.filter(t => t.id !== task.id))
     setEditMap(prev => { const n = { ...prev }; delete n[task.id]; return n })
+    setSelectedIds(prev => { const n = new Set(prev); n.delete(task.id); return n })
   }
 
   const handleReject = async (id: number) => {
     if (!window.confirm('이 할 일을 삭제하시겠습니까?')) return
     setUnconfirmed(prev => prev.filter(t => t.id !== id))
+    setSelectedIds(prev => { const n = new Set(prev); n.delete(id); return n })
     await api.deleteTask(id)
   }
 
   const handleConfirmAll = async () => {
     setConfirmingAll(true)
+    try { await api.confirmAllTasks(); setSelectedIds(new Set()); await loadAll() }
+    finally { setConfirmingAll(false) }
+  }
+
+  const toggleSelect = (id: number) =>
+    setSelectedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+
+  const isAllSelected = unconfirmed.length > 0 && unconfirmed.every(t => selectedIds.has(t.id))
+  const toggleSelectAll = () =>
+    setSelectedIds(isAllSelected ? new Set() : new Set(unconfirmed.map(t => t.id)))
+
+  // 1. 일괄 수락: 편집 내용 먼저 저장 후 confirm
+  const handleBulkConfirm = async () => {
+    if (selectedIds.size === 0) return
+    setBulkConfirming(true)
     try {
-      await api.confirmAllTasks()
-      await loadAll()
-    } finally { setConfirmingAll(false) }
+      const ids = Array.from(selectedIds)
+      // 수정된 필드 먼저 저장
+      await Promise.all(
+        ids
+          .filter(id => editMap[id] && Object.keys(editMap[id]).length > 0)
+          .map(id => {
+            const task = unconfirmed.find(t => t.id === id)
+            if (!task) return Promise.resolve()
+            const patch = buildPatch(task, getEdit(task))
+            return Object.keys(patch).length > 0 ? api.updateTask(id, patch) : Promise.resolve()
+          })
+      )
+      const { tasks: confirmed } = await api.bulkConfirmTasks(ids)
+      setTasks(prev => [...confirmed, ...prev])
+      setUnconfirmed(prev => prev.filter(t => !selectedIds.has(t.id)))
+      setEditMap(prev => { const n = { ...prev }; ids.forEach(id => delete n[id]); return n })
+      setSelectedIds(new Set())
+    } finally { setBulkConfirming(false) }
+  }
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return
+    if (!window.confirm(`선택한 ${selectedIds.size}개를 삭제하시겠습니까?`)) return
+    setBulkDeleting(true)
+    try {
+      await api.bulkDeleteTasks(Array.from(selectedIds))
+      setUnconfirmed(prev => prev.filter(t => !selectedIds.has(t.id)))
+      setSelectedIds(new Set())
+    } finally { setBulkDeleting(false) }
   }
 
   const onDragStart = (id: number) => { draggingId.current = id }
@@ -179,9 +230,145 @@ export default function Tasks() {
 
   const inProgressCount = tasks.filter(t => t.status === 'in_progress').length
 
+  // 2. 칸반 카드 렌더 (프로젝트 인라인 편집 포함)
+  const renderCard = (task: Task, cfg: typeof COS_CONFIG[CoS], colIdx: number) => {
+    const canPrev = colIdx > 0
+    const canNext = colIdx < STATUS_ORDER.length - 1
+    return (
+      <motion.div key={task.id} layout
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        draggable
+        onDragStart={() => onDragStart(task.id)}
+        onDragEnd={onDragEnd}
+        className={`border-l-2 rounded-lg p-2.5 cursor-grab active:cursor-grabbing group transition-colors ${cfg.border} ${cfg.bg} hover:bg-neutral-bg4`}
+      >
+        <p className="text-sm text-text-primary leading-snug mb-1">{task.title}</p>
+        <div className="flex items-center justify-between gap-1 flex-wrap">
+          <div className="flex gap-1 flex-wrap items-center">
+            <select
+              aria-label="담당 팀"
+              value={task.team || '미분류'}
+              onChange={e => patchTask(task.id, { team: e.target.value })}
+              onClick={e => e.stopPropagation()}
+              className="text-xs bg-neutral-bg5 text-text-muted px-1.5 py-0.5 rounded border-0 cursor-pointer hover:bg-neutral-bg6 transition-colors">
+              {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
+              <option value="미분류">미분류</option>
+            </select>
+            <select
+              aria-label="서비스 등급"
+              value={task.class_of_service || 'standard'}
+              onChange={e => patchTask(task.id, { class_of_service: e.target.value })}
+              onClick={e => e.stopPropagation()}
+              className={`text-xs px-1.5 py-0.5 rounded border-0 cursor-pointer transition-colors ${cfg.text} bg-transparent hover:bg-neutral-bg5`}>
+              {COS_ORDER.map(c => <option key={c} value={c}>{COS_CONFIG[c].icon} {COS_CONFIG[c].label}</option>)}
+            </select>
+            <input
+              type="date"
+              aria-label="기한"
+              value={task.due_date ?? ''}
+              onChange={e => patchTask(task.id, { due_date: e.target.value || undefined })}
+              onClick={e => e.stopPropagation()}
+              className={`text-xs px-1.5 py-0.5 rounded border-0 cursor-pointer bg-neutral-bg5 hover:bg-neutral-bg6 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand ${task.due_date ? 'text-status-warning' : 'text-text-muted'}`}
+            />
+          </div>
+          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+            {canPrev && (
+              <button onClick={() => patchTask(task.id, { status: STATUS_ORDER[colIdx - 1] })}
+                aria-label="이전 단계"
+                className="w-7 h-7 flex items-center justify-center rounded bg-neutral-bg5 hover:bg-neutral-bg6 text-text-secondary text-xs transition-colors" style={{touchAction:'manipulation'}}>←</button>
+            )}
+            {canNext && (
+              <button onClick={() => patchTask(task.id, { status: STATUS_ORDER[colIdx + 1] })}
+                aria-label="다음 단계"
+                className="w-7 h-7 flex items-center justify-center rounded bg-neutral-bg5 hover:bg-neutral-bg6 text-text-secondary text-xs transition-colors" style={{touchAction:'manipulation'}}>→</button>
+            )}
+            <button onClick={() => removeTask(task.id)}
+              aria-label="할 일 삭제"
+              className="w-7 h-7 flex items-center justify-center rounded bg-neutral-bg5 hover:bg-status-error/20 text-text-muted hover:text-status-error text-xs transition-colors" style={{touchAction:'manipulation'}}>✕</button>
+          </div>
+        </div>
+        {/* 2. 프로젝트 인라인 편집 */}
+        <div className="mt-1.5">
+          <input
+            key={`proj-${task.id}`}
+            type="text"
+            aria-label="프로젝트"
+            defaultValue={task.project ?? ''}
+            onBlur={e => {
+              const val = e.target.value.trim() || undefined
+              if (val !== (task.project ?? undefined)) patchTask(task.id, { project: val })
+            }}
+            onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }}
+            onClick={e => e.stopPropagation()}
+            placeholder="📁 프로젝트 추가..."
+            className={`text-xs px-1.5 py-0.5 rounded border-0 bg-transparent hover:bg-neutral-bg5 focus:bg-neutral-bg5 w-full transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand ${task.project ? 'text-brand/70' : 'text-text-muted/40 placeholder:text-text-muted/30'}`}
+          />
+        </div>
+      </motion.div>
+    )
+  }
+
+  // 3. 프로젝트별 그룹핑 렌더
+  const renderProjectGrouped = (colTasks: Task[], colIdx: number) => {
+    const projectKeys = Array.from(new Set(colTasks.map(t => t.project || '__none__')))
+    const sorted = [
+      ...projectKeys.filter(p => p !== '__none__').sort(),
+      ...(projectKeys.includes('__none__') ? ['__none__'] : []),
+    ]
+    if (sorted.length === 0) return (
+      <p className="text-xs text-text-muted text-center py-6 border border-dashed border-border-subtle rounded-lg">없음</p>
+    )
+    return (
+      <div className="space-y-4">
+        {sorted.map(proj => {
+          const projTasks = colTasks.filter(t => (t.project || '__none__') === proj)
+          if (projTasks.length === 0) return null
+          return (
+            <div key={proj}>
+              <p className="text-xs font-semibold mb-1.5 flex items-center gap-1 text-brand/70">
+                {proj === '__none__' ? '📌 단독 업무' : `📁 ${proj}`}
+                <span className="font-normal text-text-muted">({projTasks.length})</span>
+              </p>
+              <div className="space-y-2 pl-2 border-l border-brand/20">
+                {COS_ORDER.flatMap(cos => {
+                  const lane = projTasks.filter(t => t.class_of_service === cos)
+                  return lane.map(task => renderCard(task, COS_CONFIG[cos], colIdx))
+                })}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
+  const renderCosGrouped = (colTasks: Task[], colIdx: number) => (
+    <div className="space-y-4">
+      {COS_ORDER.map(cos => {
+        const lane = colTasks.filter(t => t.class_of_service === cos)
+        if (lane.length === 0) return null
+        const cfg = COS_CONFIG[cos]
+        return (
+          <div key={cos}>
+            <p className={`text-xs font-medium mb-1.5 flex items-center gap-1 ${cfg.text}`}>
+              {cfg.icon} {cfg.label}
+            </p>
+            <div className="space-y-2">
+              {lane.map(task => renderCard(task, cfg, colIdx))}
+            </div>
+          </div>
+        )
+      })}
+      {colTasks.length === 0 && (
+        <p className="text-xs text-text-muted text-center py-6 border border-dashed border-border-subtle rounded-lg">없음</p>
+      )}
+    </div>
+  )
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* 스크롤 영역 */}
       <div className="flex-1 overflow-y-auto">
         <div className="p-4 lg:p-6 space-y-5">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
@@ -209,23 +396,15 @@ export default function Tasks() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="sm:col-span-2">
                       <label className="text-xs text-text-muted mb-1 block">제목 *</label>
-                      <input
-                        name="title"
-                        autoComplete="off"
-                        value={form.title}
+                      <input name="title" autoComplete="off" value={form.title}
                         onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
                         onKeyDown={e => e.key === 'Enter' && handleCreate()}
                         placeholder="할 일 내용을 입력하세요"
-                        className="glass-input w-full px-3 py-2 text-sm rounded-lg"
-                        autoFocus
-                      />
+                        className="glass-input w-full px-3 py-2 text-sm rounded-lg" autoFocus />
                     </div>
                     <div>
                       <label className="text-xs text-text-muted mb-1 block">서비스 등급</label>
-                      <select
-                        name="class_of_service"
-                        aria-label="서비스 등급"
-                        value={form.class_of_service}
+                      <select name="class_of_service" aria-label="서비스 등급" value={form.class_of_service}
                         onChange={e => setForm(f => ({ ...f, class_of_service: e.target.value as CoS }))}
                         className="glass-input w-full px-3 py-2 text-sm bg-neutral-bg3 rounded-lg border border-border-subtle cursor-pointer">
                         {COS_ORDER.map(c => <option key={c} value={c}>{COS_CONFIG[c].icon} {COS_CONFIG[c].label}</option>)}
@@ -233,10 +412,7 @@ export default function Tasks() {
                     </div>
                     <div>
                       <label className="text-xs text-text-muted mb-1 block">담당 팀</label>
-                      <select
-                        name="team"
-                        aria-label="담당 팀"
-                        value={form.team}
+                      <select name="team" aria-label="담당 팀" value={form.team}
                         onChange={e => setForm(f => ({ ...f, team: e.target.value }))}
                         className="glass-input w-full px-3 py-2 text-sm bg-neutral-bg3 rounded-lg border border-border-subtle cursor-pointer">
                         {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
@@ -244,22 +420,22 @@ export default function Tasks() {
                     </div>
                     <div>
                       <label className="text-xs text-text-muted mb-1 block">담당자</label>
-                      <input
-                        name="assignee"
-                        autoComplete="off"
-                        value={form.assignee}
+                      <input name="assignee" autoComplete="off" value={form.assignee}
                         onChange={e => setForm(f => ({ ...f, assignee: e.target.value }))}
-                        placeholder="나"
-                        className="glass-input w-full px-3 py-2 text-sm rounded-lg" />
+                        placeholder="나" className="glass-input w-full px-3 py-2 text-sm rounded-lg" />
                     </div>
                     <div>
                       <label className="text-xs text-text-muted mb-1 block">기한 (선택)</label>
-                      <input
-                        type="date"
-                        name="due_date"
-                        value={form.due_date}
+                      <input type="date" name="due_date" value={form.due_date}
                         onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))}
                         className="glass-input w-full px-3 py-2 text-sm bg-neutral-bg3 rounded-lg border border-border-subtle cursor-pointer" />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="text-xs text-text-muted mb-1 block">프로젝트 (선택)</label>
+                      <input name="project" autoComplete="off" value={form.project}
+                        onChange={e => setForm(f => ({ ...f, project: e.target.value }))}
+                        placeholder="관련 프로젝트명 (없으면 비워두세요)"
+                        className="glass-input w-full px-3 py-2 text-sm rounded-lg" />
                     </div>
                   </div>
                   <div className="flex gap-2 justify-end">
@@ -276,71 +452,79 @@ export default function Tasks() {
                 <motion.div
                   initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
                   className="glass-card border border-status-warning/30 bg-status-warning/5">
-                  <div className="flex items-center justify-between px-5 py-3 border-b border-status-warning/20">
-                    <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-between px-5 py-3 border-b border-status-warning/20 gap-2 flex-wrap">
+                    <div className="flex items-center gap-3">
+                      <input type="checkbox" checked={isAllSelected} onChange={toggleSelectAll}
+                        aria-label="전체 선택" className="w-4 h-4 rounded accent-brand cursor-pointer" />
                       <span className="text-status-warning text-sm font-semibold">
                         📋 검토 대기 — {unconfirmed.length}개
                       </span>
-                      <span className="text-xs text-text-muted">AI가 추출한 할 일입니다. 확인 후 칸반에 추가됩니다.</span>
+                      <span className="text-xs text-text-muted hidden sm:inline">AI가 추출한 할 일입니다.</span>
                     </div>
-                    <Button size="sm" variant="secondary" onClick={handleConfirmAll} loading={confirmingAll}>
-                      모두 수락
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      {selectedIds.size > 0 ? (
+                        <>
+                          <Button size="sm" variant="secondary" onClick={handleBulkConfirm} loading={bulkConfirming}>
+                            ✓ {selectedIds.size}개 수락
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={handleBulkDelete} loading={bulkDeleting}>
+                            ✕ {selectedIds.size}개 삭제
+                          </Button>
+                        </>
+                      ) : (
+                        <Button size="sm" variant="secondary" onClick={handleConfirmAll} loading={confirmingAll}>
+                          모두 수락
+                        </Button>
+                      )}
+                    </div>
                   </div>
                   <ul className="divide-y divide-border-subtle">
                     {unconfirmed.map(task => {
                       const edited = getEdit(task)
                       const cfg = COS_CONFIG[edited.class_of_service as CoS] ?? COS_CONFIG.standard
                       const duplicate = tasks.some(t => t.status !== 'done' && isSimilarTitle(t.title, edited.title))
+                      const isSelected = selectedIds.has(task.id)
                       return (
-                        <li key={task.id} className="px-5 py-3 space-y-2">
+                        <li key={task.id} className={`px-5 py-3 space-y-2 transition-colors ${isSelected ? 'bg-brand/5' : ''}`}>
                           <div className="flex items-start gap-2">
-                            <input
-                              value={edited.title}
+                            <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(task.id)}
+                              aria-label="선택" className="mt-0.5 w-4 h-4 rounded accent-brand cursor-pointer shrink-0" />
+                            <input value={edited.title}
                               onChange={e => setEdit(task.id, { title: e.target.value })}
-                              className="flex-1 bg-transparent text-sm text-text-primary outline-none border-b border-transparent focus-visible:border-brand transition-colors pb-0.5"
-                            />
+                              className="flex-1 bg-transparent text-sm text-text-primary outline-none border-b border-transparent focus-visible:border-brand transition-colors pb-0.5" />
                             {duplicate && (
-                              <span className="text-xs text-status-warning bg-status-warning/10 px-2 py-0.5 rounded shrink-0" title="유사한 할 일이 이미 존재합니다">
-                                중복 의심
-                              </span>
+                              <span className="text-xs text-status-warning bg-status-warning/10 px-2 py-0.5 rounded shrink-0">중복 의심</span>
                             )}
                           </div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <select value={edited.class_of_service}
-                              aria-label="서비스 등급"
+                          <div className="flex flex-wrap items-center gap-2 pl-6">
+                            <select value={edited.class_of_service} aria-label="서비스 등급"
                               onChange={e => setEdit(task.id, { class_of_service: e.target.value as CoS })}
                               className={`text-xs px-2 py-1 rounded border-0 cursor-pointer bg-neutral-bg4 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand ${cfg.text}`}>
                               {COS_ORDER.map(c => <option key={c} value={c}>{COS_CONFIG[c].icon} {COS_CONFIG[c].label}</option>)}
                             </select>
-                            <select value={edited.team}
-                              aria-label="담당 팀"
+                            <select value={edited.team} aria-label="담당 팀"
                               onChange={e => setEdit(task.id, { team: e.target.value })}
                               className="text-xs px-2 py-1 rounded border-0 cursor-pointer bg-neutral-bg4 text-text-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand">
                               {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
                               <option value="미분류">미분류</option>
                             </select>
-                            <input
-                              aria-label="담당자"
-                              value={edited.assignee ?? '나'}
+                            <input aria-label="담당자" value={edited.assignee ?? '나'}
                               onChange={e => setEdit(task.id, { assignee: e.target.value })}
                               placeholder="담당자"
-                              className="text-xs px-2 py-1 rounded bg-neutral-bg4 text-text-muted w-20 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand"
-                            />
-                            <input type="date"
-                              aria-label="기한"
-                              value={edited.due_date ?? ''}
+                              className="text-xs px-2 py-1 rounded bg-neutral-bg4 text-text-muted w-20 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand" />
+                            <input type="date" aria-label="기한" value={edited.due_date ?? ''}
                               onChange={e => setEdit(task.id, { due_date: e.target.value || null })}
-                              className="text-xs px-2 py-1 rounded bg-neutral-bg4 text-text-muted cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand"
-                            />
+                              className="text-xs px-2 py-1 rounded bg-neutral-bg4 text-text-muted cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand" />
+                            <input aria-label="프로젝트" value={edited.project ?? ''}
+                              onChange={e => setEdit(task.id, { project: e.target.value || null })}
+                              placeholder="📁 프로젝트"
+                              className="text-xs px-2 py-1 rounded bg-neutral-bg4 text-text-muted w-28 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand" />
                             <div className="flex gap-1 ml-auto">
-                              <button
-                                onClick={() => handleConfirm(task)}
+                              <button onClick={() => handleConfirm(task)}
                                 className="text-xs px-3 py-1 rounded bg-status-success/20 text-status-success hover:bg-status-success/30 transition-colors font-medium">
                                 ✓ 확인
                               </button>
-                              <button
-                                onClick={() => handleReject(task.id)}
+                              <button onClick={() => handleReject(task.id)}
                                 className="text-xs px-3 py-1 rounded bg-neutral-bg4 text-text-muted hover:bg-status-error/20 hover:text-status-error transition-colors">
                                 ✕ 삭제
                               </button>
@@ -363,28 +547,62 @@ export default function Tasks() {
               </div>
             )}
 
-            {/* 필터 */}
-            <div className="flex flex-wrap gap-2">
-              <div className="flex flex-wrap gap-1 bg-neutral-bg3 p-1 rounded-lg">
-                <button onClick={() => setCosFilter('all')}
-                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${cosFilter === 'all' ? 'bg-brand text-white' : 'text-text-secondary hover:text-text-primary'}`}>
-                  전체
-                </button>
-                {COS_ORDER.map(cos => (
-                  <button key={cos} onClick={() => setCosFilter(cos)}
-                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors flex items-center gap-1 ${cosFilter === cos ? 'bg-brand text-white' : 'text-text-secondary hover:text-text-primary'}`}>
-                    {COS_CONFIG[cos].icon} {COS_CONFIG[cos].label}
+            {/* 필터 + 보기 전환 */}
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap gap-2 items-center justify-between">
+                <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-1 bg-neutral-bg3 p-1 rounded-lg">
+                    <button onClick={() => setCosFilter('all')}
+                      className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${cosFilter === 'all' ? 'bg-brand text-white' : 'text-text-secondary hover:text-text-primary'}`}>
+                      전체
+                    </button>
+                    {COS_ORDER.map(cos => (
+                      <button key={cos} onClick={() => setCosFilter(cos)}
+                        className={`px-3 py-1 rounded-md text-xs font-medium transition-colors flex items-center gap-1 ${cosFilter === cos ? 'bg-brand text-white' : 'text-text-secondary hover:text-text-primary'}`}>
+                        {COS_CONFIG[cos].icon} {COS_CONFIG[cos].label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-1 bg-neutral-bg3 p-1 rounded-lg">
+                    {allTeams.map(t => (
+                      <button key={t} onClick={() => setTeamFilter(t)}
+                        className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${teamFilter === t ? 'bg-neutral-bg6 text-text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
+                        {t === 'all' ? '전체팀' : t}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {/* 3. 보기 전환 토글 */}
+                <div className="flex gap-1 bg-neutral-bg3 p-1 rounded-lg shrink-0">
+                  <button onClick={() => setViewMode('cos')}
+                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${viewMode === 'cos' ? 'bg-neutral-bg6 text-text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
+                    등급별
                   </button>
-                ))}
-              </div>
-              <div className="flex flex-wrap gap-1 bg-neutral-bg3 p-1 rounded-lg">
-                {allTeams.map(t => (
-                  <button key={t} onClick={() => setTeamFilter(t)}
-                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${teamFilter === t ? 'bg-neutral-bg6 text-text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
-                    {t === 'all' ? '전체팀' : t}
+                  <button onClick={() => setViewMode('project')}
+                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${viewMode === 'project' ? 'bg-neutral-bg6 text-text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
+                    📁 프로젝트별
                   </button>
-                ))}
+                </div>
               </div>
+
+              {allProjects.length > 0 && (
+                <div className="flex flex-wrap gap-1 bg-neutral-bg3 p-1 rounded-lg w-fit">
+                  <button onClick={() => setProjectFilter('all')}
+                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${projectFilter === 'all' ? 'bg-brand/80 text-white' : 'text-text-secondary hover:text-text-primary'}`}>
+                    전체 프로젝트
+                  </button>
+                  <button onClick={() => setProjectFilter('__none__')}
+                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${projectFilter === '__none__' ? 'bg-brand/80 text-white' : 'text-text-secondary hover:text-text-primary'}`}>
+                    단독 업무
+                  </button>
+                  {allProjects.map(p => (
+                    <button key={p} onClick={() => setProjectFilter(p)}
+                      className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${projectFilter === p ? 'bg-brand/80 text-white' : 'text-text-secondary hover:text-text-primary'}`}>
+                      📁 {p}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {error && (
@@ -422,112 +640,26 @@ export default function Tasks() {
                         <span className="text-sm font-semibold text-text-secondary">{col.label}</span>
                         <div className="flex items-center gap-1.5">
                           {hiddenCount > 0 && (
-                            <button
-                              onClick={() => setShowOldDone(true)}
+                            <button onClick={() => setShowOldDone(true)}
                               className="text-xs text-text-muted hover:text-text-secondary underline transition-colors"
-                              title={`${DONE_HIDE_DAYS}일 이상 지난 완료 ${hiddenCount}건 숨김`}
-                            >
+                              title={`${DONE_HIDE_DAYS}일 이상 지난 완료 ${hiddenCount}건 숨김`}>
                               +{hiddenCount}개 숨김
                             </button>
                           )}
                           {col.id === 'done' && showOldDone && (
-                            <button
-                              onClick={() => setShowOldDone(false)}
-                              className="text-xs text-text-muted hover:text-text-secondary transition-colors"
-                            >
+                            <button onClick={() => setShowOldDone(false)}
+                              className="text-xs text-text-muted hover:text-text-secondary transition-colors">
                               최근만
                             </button>
                           )}
                           <span className="text-xs text-text-muted bg-neutral-bg4 px-2 py-0.5 rounded-full">{colTasks.length}</span>
                         </div>
                       </div>
-
                       <AnimatePresence>
-                        <div className="space-y-4">
-                          {COS_ORDER.map(cos => {
-                            const lane = colTasks.filter(t => t.class_of_service === cos)
-                            if (lane.length === 0) return null
-                            const cfg = COS_CONFIG[cos]
-                            return (
-                              <div key={cos}>
-                                <p className={`text-xs font-medium mb-1.5 flex items-center gap-1 ${cfg.text}`}>
-                                  {cfg.icon} {cfg.label}
-                                </p>
-                                <div className="space-y-2">
-                                  {lane.map(task => {
-                                    const canPrev = colIdx > 0
-                                    const canNext = colIdx < STATUS_ORDER.length - 1
-                                    return (
-                                      <motion.div key={task.id} layout
-                                        initial={{ opacity: 0, scale: 0.95 }}
-                                        animate={{ opacity: 1, scale: 1 }}
-                                        exit={{ opacity: 0, scale: 0.95 }}
-                                        draggable
-                                        onDragStart={() => onDragStart(task.id)}
-                                        onDragEnd={onDragEnd}
-                                        className={`border-l-2 rounded-lg p-2.5 cursor-grab active:cursor-grabbing group transition-colors ${cfg.border} ${cfg.bg} hover:bg-neutral-bg4`}
-                                      >
-                                        <p className="text-sm text-text-primary leading-snug mb-2">{task.title}</p>
-                                        <div className="flex items-center justify-between gap-1">
-                                          <div className="flex gap-1 flex-wrap">
-                                            <select
-                                              aria-label="담당 팀"
-                                              value={task.team || '미분류'}
-                                              onChange={e => patchTask(task.id, { team: e.target.value })}
-                                              onClick={e => e.stopPropagation()}
-                                              className="text-xs bg-neutral-bg5 text-text-muted px-1.5 py-0.5 rounded border-0 cursor-pointer hover:bg-neutral-bg6 transition-colors">
-                                              {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
-                                              <option value="미분류">미분류</option>
-                                            </select>
-                                            <select
-                                              aria-label="서비스 등급"
-                                              value={task.class_of_service || 'standard'}
-                                              onChange={e => patchTask(task.id, { class_of_service: e.target.value })}
-                                              onClick={e => e.stopPropagation()}
-                                              className={`text-xs px-1.5 py-0.5 rounded border-0 cursor-pointer transition-colors ${cfg.text} bg-transparent hover:bg-neutral-bg5`}>
-                                              {COS_ORDER.map(c => (
-                                                <option key={c} value={c}>{COS_CONFIG[c].icon} {COS_CONFIG[c].label}</option>
-                                              ))}
-                                            </select>
-                                            <input
-                                              type="date"
-                                              aria-label="기한"
-                                              value={task.due_date ?? ''}
-                                              onChange={e => patchTask(task.id, { due_date: e.target.value || undefined })}
-                                              onClick={e => e.stopPropagation()}
-                                              className={`text-xs px-1.5 py-0.5 rounded border-0 cursor-pointer bg-neutral-bg5 hover:bg-neutral-bg6 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand ${task.due_date ? 'text-status-warning' : 'text-text-muted'}`}
-                                            />
-                                          </div>
-                                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                                            {canPrev && (
-                                              <button
-                                                onClick={() => patchTask(task.id, { status: STATUS_ORDER[colIdx - 1] })}
-                                                aria-label="이전 단계"
-                                                className="w-7 h-7 flex items-center justify-center rounded bg-neutral-bg5 hover:bg-neutral-bg6 text-text-secondary text-xs transition-colors" style={{touchAction:'manipulation'}}>←</button>
-                                            )}
-                                            {canNext && (
-                                              <button
-                                                onClick={() => patchTask(task.id, { status: STATUS_ORDER[colIdx + 1] })}
-                                                aria-label="다음 단계"
-                                                className="w-7 h-7 flex items-center justify-center rounded bg-neutral-bg5 hover:bg-neutral-bg6 text-text-secondary text-xs transition-colors" style={{touchAction:'manipulation'}}>→</button>
-                                            )}
-                                            <button
-                                              onClick={() => removeTask(task.id)}
-                                              aria-label="할 일 삭제"
-                                              className="w-7 h-7 flex items-center justify-center rounded bg-neutral-bg5 hover:bg-status-error/20 text-text-muted hover:text-status-error text-xs transition-colors" style={{touchAction:'manipulation'}}>✕</button>
-                                          </div>
-                                        </div>
-                                      </motion.div>
-                                    )
-                                  })}
-                                </div>
-                              </div>
-                            )
-                          })}
-                          {colTasks.length === 0 && (
-                            <p className="text-xs text-text-muted text-center py-6 border border-dashed border-border-subtle rounded-lg">없음</p>
-                          )}
-                        </div>
+                        {viewMode === 'project'
+                          ? renderProjectGrouped(colTasks, colIdx)
+                          : renderCosGrouped(colTasks, colIdx)
+                        }
                       </AnimatePresence>
                     </div>
                   )

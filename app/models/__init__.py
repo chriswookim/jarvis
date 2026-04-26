@@ -29,6 +29,7 @@ class Task(Base):
     assignee = Column(String(100))
     due_date = Column(String(20))
     status = Column(String(20), default="pending")
+    project = Column(String(200), nullable=True)
     confirmed = Column(Boolean, default=True)
     completed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=func.now())

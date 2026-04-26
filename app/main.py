@@ -35,6 +35,7 @@ def migrate_db():
         ("tasks", "class_of_service", "VARCHAR(20) DEFAULT 'standard'"),
         ("tasks", "team",             "VARCHAR(50)  DEFAULT '미분류'"),
         ("tasks", "due_date",         "VARCHAR(20)"),
+        ("tasks", "project",          "VARCHAR(200)"),
         ("tasks", "confirmed",        "BOOLEAN DEFAULT 1"),
         ("tasks", "completed_at",     "DATETIME"),
         ("knowledge", "folder",       "VARCHAR(100) DEFAULT '일반'"),
@@ -115,6 +116,7 @@ def _task_dict(t: Task) -> dict:
         "team": t.team or "미분류",
         "assignee": t.assignee,
         "due_date": t.due_date,
+        "project": t.project,
         "status": t.status,
         "confirmed": t.confirmed if t.confirmed is not None else True,
         "completed_at": fmt_dt(t.completed_at),
@@ -173,6 +175,7 @@ def auto_process(doc_id: int):
                         team=t.get("team", "미분류"),
                         assignee=t.get("assignee", "나"),
                         due_date=t.get("due_date"),
+                        project=t.get("project"),
                         confirmed=False,  # 검토 후 확인 필요
                     ))
                 db.commit()
@@ -572,6 +575,30 @@ async def get_unconfirmed_tasks():
         tasks = db.query(Task).filter(Task.confirmed == False).order_by(Task.created_at.desc()).all()
         return [_task_dict(t) for t in tasks]
 
+class BulkIds(BaseModel):
+    ids: list[int]
+
+@api.post("/tasks/bulk-confirm")
+async def bulk_confirm_tasks(req: BulkIds):
+    with get_db() as db:
+        tasks = db.query(Task).filter(Task.id.in_(req.ids), Task.confirmed == False).all()
+        for t in tasks:
+            t.confirmed = True
+        db.commit()
+        log(db, "task_confirm", f"할 일 {len(tasks)}개 선택 확인", "success")
+        return {"confirmed": len(tasks), "tasks": [_task_dict(t) for t in tasks]}
+
+@api.post("/tasks/bulk-delete")
+async def bulk_delete_tasks(req: BulkIds):
+    with get_db() as db:
+        tasks = db.query(Task).filter(Task.id.in_(req.ids)).all()
+        count = len(tasks)
+        for t in tasks:
+            db.delete(t)
+        db.commit()
+        log(db, "task_update", f"할 일 {count}개 선택 삭제", "info")
+        return {"deleted": count}
+
 @api.post("/tasks/confirm-all")
 async def confirm_all_tasks():
     with get_db() as db:
@@ -597,6 +624,7 @@ class TaskCreate(BaseModel):
     team: str = "미분류"
     assignee: str | None = None
     due_date: str | None = None
+    project: str | None = None
 
 @api.post("/tasks")
 async def create_task(req: TaskCreate):
@@ -607,6 +635,7 @@ async def create_task(req: TaskCreate):
             team=req.team,
             assignee=req.assignee,
             due_date=req.due_date,
+            project=req.project,
             confirmed=True,
         )
         db.add(task); db.commit()
@@ -629,6 +658,7 @@ class TaskStatusUpdate(BaseModel):
     title: str | None = None
     assignee: str | None = None
     due_date: str | None = None
+    project: str | None = None
 
 @api.patch("/tasks/{task_id}")
 async def update_task(task_id: int, req: TaskStatusUpdate):
@@ -654,6 +684,8 @@ async def update_task(task_id: int, req: TaskStatusUpdate):
             task.assignee = req.assignee
         if req.due_date is not None:
             task.due_date = req.due_date or None
+        if req.project is not None:
+            task.project = req.project or None
         db.commit()
         return _task_dict(task)
 

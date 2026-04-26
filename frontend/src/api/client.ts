@@ -33,6 +33,7 @@ export interface Task {
   team: string
   assignee: string
   due_date: string | null
+  project: string | null
   status: TaskStatus
   confirmed: boolean
   completed_at: string | null
@@ -115,10 +116,10 @@ export const api = {
   confirmTask: (id: number) => req<Task>(`/tasks/${id}/confirm`, { method: 'POST' }),
   confirmAllTasks: () => req<{ confirmed: number }>('/tasks/confirm-all', { method: 'POST' }),
 
-  createTask: (data: { title: string; class_of_service: string; team: string; assignee?: string; due_date?: string }) =>
+  createTask: (data: { title: string; class_of_service: string; team: string; assignee?: string; due_date?: string; project?: string }) =>
     req<Task>('/tasks', { method: 'POST', body: JSON.stringify(data) }),
 
-  updateTask: (id: number, patch: Partial<{ status: string; class_of_service: string; team: string; title: string; assignee: string; due_date: string }>) =>
+  updateTask: (id: number, patch: Partial<{ status: string; class_of_service: string; team: string; title: string; assignee: string; due_date: string; project: string }>) =>
     req<Task>(`/tasks/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
@@ -126,6 +127,16 @@ export const api = {
 
   deleteTask: (id: number) =>
     req<{ deleted: number }>(`/tasks/${id}`, { method: 'DELETE' }),
+
+  bulkConfirmTasks: (ids: number[]) =>
+    req<{ confirmed: number; tasks: Task[] }>('/tasks/bulk-confirm', {
+      method: 'POST', body: JSON.stringify({ ids }),
+    }),
+
+  bulkDeleteTasks: (ids: number[]) =>
+    req<{ deleted: number }>('/tasks/bulk-delete', {
+      method: 'POST', body: JSON.stringify({ ids }),
+    }),
 
   sendReport: () => req<{ sent: boolean; task_count: number }>('/tasks/report', { method: 'POST' }),
 
