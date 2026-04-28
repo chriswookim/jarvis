@@ -84,9 +84,10 @@ def fetch_unread_emails(limit: int = 10) -> list[dict]:
             if sent_dt and (now - sent_dt).days > MAX_AGE_DAYS:
                 continue  # 3일 이상 지난 메일 건너뜀
 
-            subject = _decode_str(msg.get("Subject", "(제목없음)"))
-            sender  = _decode_str(msg.get("From", ""))
-            body    = _get_body(msg)
+            subject    = _decode_str(msg.get("Subject", "(제목없음)"))
+            sender     = _decode_str(msg.get("From", ""))
+            body       = _get_body(msg)
+            message_id = msg.get("Message-ID", "").strip()
 
             if sent_dt:
                 kst_dt = sent_dt.astimezone(KST)
@@ -103,6 +104,7 @@ def fetch_unread_emails(limit: int = 10) -> list[dict]:
                     f"{body}"
                 ),
                 "source": "email",
+                "message_id": message_id or None,
             })
 
     return results

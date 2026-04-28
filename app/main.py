@@ -39,6 +39,7 @@ def migrate_db():
         ("tasks", "confirmed",        "BOOLEAN DEFAULT 1"),
         ("tasks", "completed_at",     "DATETIME"),
         ("knowledge", "folder",       "VARCHAR(100) DEFAULT '일반'"),
+        ("documents", "message_id",   "VARCHAR(500)"),
     ]
     with engine.connect() as conn:
         for table, col, definition in new_cols:
@@ -220,11 +221,20 @@ def _scheduled_email_fetch():
             log(db, "ingest_email", "[자동수집] 새 메일 없음")
             return
         ids = []
+        skipped = 0
         for e in emails:
-            doc = Document(source="email", title=e["title"], content=e["content"])
+            mid = e.get("message_id")
+            if mid and db.query(Document).filter(Document.message_id == mid).first():
+                skipped += 1
+                continue
+            doc = Document(source="email", title=e["title"], content=e["content"],
+                           message_id=mid)
             db.add(doc); db.commit()
             ids.append(doc.id)
-        log(db, "ingest_email", f"[자동수집] 메일 {len(ids)}개 수집 완료, LLM 분석 예약", "success")
+        msg = f"[자동수집] 메일 {len(ids)}개 수집 완료, LLM 분석 예약"
+        if skipped:
+            msg += f" (중복 {skipped}개 스킵)"
+        log(db, "ingest_email", msg, "success" if ids else "info")
     for doc_id in ids:
         auto_process(doc_id)
 
@@ -365,13 +375,22 @@ async def ingest_email(background: BackgroundTasks, limit: int = 10):
             log(db, "ingest_email", "읽지 않은 메일 없음 (UNSEEN 0건)")
             return {"ingested": 0, "message": "읽지 않은 메일이 없습니다."}
         ids = []
+        skipped = 0
         for e in emails:
-            doc = Document(source="email", title=e["title"], content=e["content"])
+            mid = e.get("message_id")
+            if mid and db.query(Document).filter(Document.message_id == mid).first():
+                skipped += 1
+                continue
+            doc = Document(source="email", title=e["title"], content=e["content"],
+                           message_id=mid)
             db.add(doc); db.commit()
             ids.append(doc.id)
             background.add_task(auto_process, doc.id)
-        log(db, "ingest_email", f"메일 {len(ids)}개 수집 완료, LLM 분석 예약", "success")
-        return {"ingested": len(ids), "doc_ids": ids}
+        msg = f"메일 {len(ids)}개 수집 완료, LLM 분석 예약"
+        if skipped:
+            msg += f" (중복 {skipped}개 스킵)"
+        log(db, "ingest_email", msg, "success" if ids else "info")
+        return {"ingested": len(ids), "skipped": skipped, "doc_ids": ids}
 
 
 # ── 지식 처리 ─────────────────────────────────────────────────────────────────

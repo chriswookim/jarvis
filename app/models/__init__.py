@@ -9,6 +9,7 @@ class Document(Base):
     title = Column(String(500))
     content = Column(Text)
     summary = Column(Text)
+    message_id = Column(String(500), nullable=True, unique=True, index=True)
     created_at = Column(DateTime, default=func.now())
 
 class KnowledgeEntry(Base):
