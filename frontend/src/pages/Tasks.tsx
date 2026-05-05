@@ -25,6 +25,31 @@ const STATUS_ORDER: TaskStatus[] = ['pending', 'in_progress', 'done']
 const WIP_LIMIT = 5
 const DONE_HIDE_DAYS = 7
 
+// 다크 테마에서 명확하게 보이는 커스텀 체크박스
+function Checkbox({ checked, onChange, label, size = 'md' }: {
+  checked: boolean; onChange: () => void; label: string; size?: 'sm' | 'md'
+}) {
+  const box = size === 'sm' ? 'w-4 h-4' : 'w-5 h-5'
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      aria-label={label}
+      onClick={e => { e.stopPropagation(); onChange() }}
+      className={`${box} rounded flex items-center justify-center shrink-0 transition-all cursor-pointer
+        ${checked
+          ? 'bg-brand border-2 border-brand text-white shadow-[0_0_0_3px_rgba(130,81,238,0.2)]'
+          : 'bg-neutral-bg5 border-2 border-white/50 text-transparent hover:border-brand hover:bg-neutral-bg6'
+        }`}
+    >
+      <svg viewBox="0 0 10 8" className="w-2.5 h-2.5" fill="none">
+        <path d="M1 4l3 3 5-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    </button>
+  )
+}
+
 interface NewTaskForm {
   title: string; class_of_service: CoS; team: string; assignee: string; due_date: string; project: string
 }
@@ -42,7 +67,8 @@ function isSimilarTitle(a: string, b: string): boolean {
 }
 
 function isDoneOld(task: Task): boolean {
-  if (task.status !== 'done' || !task.completed_at) return false
+  if (task.status !== 'done') return false
+  if (!task.completed_at) return true  // 완료 시각 없으면 오래된 것으로 간주 → 기본 숨김
   return (Date.now() - new Date(task.completed_at).getTime()) / 86400000 > DONE_HIDE_DAYS
 }
 
@@ -70,10 +96,12 @@ export default function Tasks() {
   const [confirmingAll, setConfirmingAll] = useState(false)
   const draggingId = useRef<number | null>(null)
 
-  const [showForm, setShowForm] = useState(false)
-  const [form, setForm]         = useState<NewTaskForm>(EMPTY_FORM)
-  const [creating, setCreating] = useState(false)
-  const [editMap, setEditMap]   = useState<Record<number, Partial<Task>>>({})
+  const [showForm, setShowForm]       = useState(false)
+  const [form, setForm]               = useState<NewTaskForm>(EMPTY_FORM)
+  const [creating, setCreating]       = useState(false)
+  const [editMap, setEditMap]         = useState<Record<number, Partial<Task>>>({})
+  const [editingTitleId, setEditingTitleId] = useState<number | null>(null)
+  const [editingTitleVal, setEditingTitleVal] = useState('')
 
   const loadAll = () => {
     setLoading(true)
@@ -103,6 +131,16 @@ export default function Tasks() {
     )
 
   const oldDoneCount = tasks.filter(isDoneOld).length
+  const doneTasks = tasks.filter(t => t.status === 'done')
+
+  const handleClearDone = async () => {
+    if (doneTasks.length === 0) return
+    if (!window.confirm(`완료된 할 일 ${doneTasks.length}개를 모두 삭제하시겠습니까?`)) return
+    const ids = doneTasks.map(t => t.id)
+    setTasks(prev => prev.filter(t => t.status !== 'done'))
+    try { await api.bulkDeleteTasks(ids) }
+    catch { loadAll() }
+  }
 
   const patchTask = async (id: number, patch: Parameters<typeof api.updateTask>[1]) => {
     setTasks(prev => prev.map(t => t.id === id ? { ...t, ...patch } as Task : t))
@@ -219,6 +257,16 @@ export default function Tasks() {
     } finally { setBulkDeleting(false) }
   }
 
+  const startTitleEdit = (task: Task) => {
+    setEditingTitleId(task.id)
+    setEditingTitleVal(task.title)
+  }
+  const commitTitleEdit = (task: Task) => {
+    const trimmed = editingTitleVal.trim()
+    if (trimmed && trimmed !== task.title) patchTask(task.id, { title: trimmed })
+    setEditingTitleId(null)
+  }
+
   const onDragStart = (id: number) => { draggingId.current = id }
   const onDragEnd   = () => { draggingId.current = null; setDragOverCol(null) }
   const onDragOver  = (e: React.DragEvent, col: TaskStatus) => { e.preventDefault(); setDragOverCol(col) }
@@ -244,7 +292,26 @@ export default function Tasks() {
         onDragEnd={onDragEnd}
         className={`border-l-2 rounded-lg p-2.5 cursor-grab active:cursor-grabbing group transition-colors ${cfg.border} ${cfg.bg} hover:bg-neutral-bg4`}
       >
-        <p className="text-sm text-text-primary leading-snug mb-1">{task.title}</p>
+        {editingTitleId === task.id ? (
+          <input
+            autoFocus
+            value={editingTitleVal}
+            onChange={e => setEditingTitleVal(e.target.value)}
+            onBlur={() => commitTitleEdit(task)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { e.preventDefault(); commitTitleEdit(task) }
+              if (e.key === 'Escape') setEditingTitleId(null)
+            }}
+            onClick={e => e.stopPropagation()}
+            className="text-sm text-text-primary leading-snug mb-1 w-full bg-neutral-bg5 border border-brand/50 rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-brand"
+          />
+        ) : (
+          <p
+            className="text-sm text-text-primary leading-snug mb-1 cursor-text hover:text-brand-light transition-colors"
+            title="클릭하여 제목 수정"
+            onClick={e => { e.stopPropagation(); startTitleEdit(task) }}
+          >{task.title}</p>
+        )}
         <div className="flex items-center justify-between gap-1 flex-wrap">
           <div className="flex gap-1 flex-wrap items-center">
             <select
@@ -454,8 +521,7 @@ export default function Tasks() {
                   className="glass-card border border-status-warning/30 bg-status-warning/5">
                   <div className="flex items-center justify-between px-5 py-3 border-b border-status-warning/20 gap-2 flex-wrap">
                     <div className="flex items-center gap-3">
-                      <input type="checkbox" checked={isAllSelected} onChange={toggleSelectAll}
-                        aria-label="전체 선택" className="w-4 h-4 rounded accent-brand cursor-pointer" />
+                      <Checkbox checked={isAllSelected} onChange={toggleSelectAll} label="전체 선택" />
                       <span className="text-status-warning text-sm font-semibold">
                         📋 검토 대기 — {unconfirmed.length}개
                       </span>
@@ -487,8 +553,7 @@ export default function Tasks() {
                       return (
                         <li key={task.id} className={`px-5 py-3 space-y-2 transition-colors ${isSelected ? 'bg-brand/5' : ''}`}>
                           <div className="flex items-start gap-2">
-                            <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(task.id)}
-                              aria-label="선택" className="mt-0.5 w-4 h-4 rounded accent-brand cursor-pointer shrink-0" />
+                            <Checkbox checked={isSelected} onChange={() => toggleSelect(task.id)} label="선택" size="sm" />
                             <input value={edited.title}
                               onChange={e => setEdit(task.id, { title: e.target.value })}
                               className="flex-1 bg-transparent text-sm text-text-primary outline-none border-b border-transparent focus-visible:border-brand transition-colors pb-0.5" />
@@ -639,6 +704,13 @@ export default function Tasks() {
                       <div className="flex items-center justify-between mb-4">
                         <span className="text-sm font-semibold text-text-secondary">{col.label}</span>
                         <div className="flex items-center gap-1.5">
+                          {col.id === 'done' && doneTasks.length > 0 && (
+                            <button onClick={handleClearDone}
+                              className="text-xs text-text-muted hover:text-status-error hover:bg-status-error/10 px-1.5 py-0.5 rounded transition-colors"
+                              title="완료된 할 일 전체 삭제">
+                              🗑 정리
+                            </button>
+                          )}
                           {hiddenCount > 0 && (
                             <button onClick={() => setShowOldDone(true)}
                               className="text-xs text-text-muted hover:text-text-secondary underline transition-colors"
