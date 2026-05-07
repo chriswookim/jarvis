@@ -1,6 +1,5 @@
 import json, re
 from app.modules.llm import chat
-from app.config import settings
 
 TEAMS = [
     "기획홍보팀", "법제팀", "해외수주지원팀", "산업혁신팀", "총무관리팀",
@@ -150,7 +149,6 @@ project 분류:
 
 JSON 배열만 반환하세요.""",
                 system="당신은 업무 분석 전문가입니다. 할 일을 JSON 배열로만 반환합니다.",
-                model=settings.zen_model,
             )
         except Exception as e:
             chunk_logs.append(f"파트{label}[LLM실패:{type(e).__name__}]")

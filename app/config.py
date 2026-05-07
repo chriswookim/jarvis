@@ -3,7 +3,6 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     zen_api_key: str
     zen_base_url: str = "https://opencode.ai/zen/v1"
-    zen_model: str = "big-pickle"
     zen_memory_model: str = "big-pickle"
 
     telegram_bot_token: str = ""
