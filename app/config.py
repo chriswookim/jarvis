@@ -4,6 +4,9 @@ class Settings(BaseSettings):
     zen_api_key: str
     zen_base_url: str = "https://opencode.ai/zen/v1"
     zen_memory_model: str = "big-pickle"
+    groq_api_key: str = ""
+    gemini_api_key: str = ""
+    openrouter_api_key: str = ""
 
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""

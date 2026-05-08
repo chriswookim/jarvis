@@ -1,11 +1,11 @@
 """
-Zen 무료 LLM 라우팅 테스트
+멀티 프로바이더 LLM 라우팅 테스트
 실행: python test_llm_routing.py
 """
 import os, sys, time
 sys.stdout.reconfigure(encoding="utf-8")
 
-# .env 직접 로드 (dotenv 없이)
+# .env 직접 로드
 env_path = os.path.join(os.path.dirname(__file__), ".env")
 if os.path.exists(env_path):
     for line in open(env_path, encoding="utf-8"):
@@ -14,45 +14,45 @@ if os.path.exists(env_path):
             k, _, v = line.partition("=")
             os.environ.setdefault(k.strip(), v.strip())
 
-from openai import OpenAI
-from app.modules.llm import FREE_MODELS, chat, _trip, _circuit_open_until
+from app.modules.llm import _get_endpoints, _trip, _circuit_open_until, chat
 
-API_KEY  = os.environ.get("ZEN_API_KEY", "")
-BASE_URL = os.environ.get("ZEN_BASE_URL", "https://opencode.ai/zen/v1")
-
-if not API_KEY or "여기에" in API_KEY:
-    print("❌  ZEN_API_KEY 미설정 — .env에 실제 키를 입력하세요")
-    sys.exit(1)
-
-client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
 PROMPT = "Reply with exactly: OK"
 
-# ─── 1. 모델별 직접 호출 ────────────────────────────────────────────
-print("=" * 55)
-print("1. 무료 모델 개별 호출 테스트")
-print("=" * 55)
-results = {}
-for model in FREE_MODELS:
+eps = _get_endpoints()
+if not eps:
+    print("❌  활성 엔드포인트 없음 — API 키를 .env에 설정하세요")
+    sys.exit(1)
+
+print(f"활성 엔드포인트: {len(eps)}개")
+for ep in eps:
+    print(f"  · {ep.tag}")
+
+# ─── 1. 엔드포인트별 직접 호출 ─────────────────────────────────────
+print()
+print("=" * 60)
+print("1. 엔드포인트별 직접 호출")
+print("=" * 60)
+ok_tags = []
+for ep in eps:
     try:
         t0 = time.time()
-        resp = client.chat.completions.create(
-            model=model,
+        resp = ep.client.chat.completions.create(
+            model=ep.model,
             messages=[{"role": "user", "content": PROMPT}],
             max_tokens=16,
         )
         elapsed = time.time() - t0
-        content = resp.choices[0].message.content or ""
-        results[model] = True
-        print(f"  ✓  {model:<28}  {elapsed:.1f}s  →  {content.strip()!r}")
+        content = (resp.choices[0].message.content or "").strip()
+        ok_tags.append(ep.tag)
+        print(f"  ✓  {ep.tag:<45}  {elapsed:.1f}s  →  {content!r}")
     except Exception as e:
-        results[model] = False
-        print(f"  ✗  {model:<28}  {type(e).__name__}: {e}")
+        print(f"  ✗  {ep.tag:<45}  {type(e).__name__}: {str(e)[:60]}")
 
-# ─── 2. 라운드로빈 routing ──────────────────────────────────────────
+# ─── 2. 라운드로빈 routing ─────────────────────────────────────────
 print()
-print("=" * 55)
+print("=" * 60)
 print("2. chat() 라운드로빈 — 5회 호출")
-print("=" * 55)
+print("=" * 60)
 for i in range(5):
     try:
         t0 = time.time()
@@ -62,13 +62,14 @@ for i in range(5):
     except RuntimeError as e:
         print(f"  [{i+1}] RuntimeError: {e}")
 
-# ─── 3. 서킷브레이커 페일오버 ──────────────────────────────────────
+# ─── 3. 서킷브레이커 페일오버 ─────────────────────────────────────
 print()
-print("=" * 55)
-print("3. 서킷브레이커 테스트 — 첫 모델 강제 차단 후 호출")
-print("=" * 55)
-_trip(FREE_MODELS[0])
-print(f"  → '{FREE_MODELS[0]}' 강제 차단")
+print("=" * 60)
+print("3. 서킷브레이커 — 첫 엔드포인트 강제 차단 후 페일오버")
+print("=" * 60)
+first_tag = eps[0].tag
+_trip(first_tag)
+print(f"  → '{first_tag}' 강제 차단")
 try:
     answer = chat(PROMPT)
     print(f"  ✓  페일오버 성공  →  {answer.strip()!r}")
@@ -78,4 +79,4 @@ _circuit_open_until.clear()
 print(f"  → 서킷 초기화 완료")
 
 print()
-print("테스트 완료")
+print(f"완료: {len(ok_tags)}/{len(eps)} 엔드포인트 정상")
